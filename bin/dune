@@ -1,0 +1,15 @@
+(executable
+ (name main)
+ (public_name lexeme)
+ (libraries
+  core
+  core_unix.command_unix
+  core_unix.sys_unix
+  lexeme.c
+  lexeme.lexicon
+  lexeme.naming
+  lexeme.ocaml
+  lexeme.process
+  lexeme.syntax)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,0 +1,6 @@
+(library
+ (name naming)
+ (public_name lexeme.naming)
+ (libraries core lexeme.grammar lexeme.lexicon lexeme.syntax)
+ (preprocess
+  (pps ppx_jane)))

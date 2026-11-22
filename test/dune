@@ -1,0 +1,9 @@
+(library
+ (name test_naming)
+ (libraries core lexeme.lexicon lexeme.naming lexeme.ocaml lexeme.syntax)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))
+
+(cram
+ (deps %{bin:lexeme}))
