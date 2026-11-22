@@ -1,0 +1,17 @@
+(library
+ (name lexicon)
+ (public_name lexeme.lexicon)
+ (private_modules english)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane)))
+
+(rule
+ (target english.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let vocabulary = {|\n")
+    (cat %{dep:english/wordnet.words})
+    (echo "|}\n")))))
