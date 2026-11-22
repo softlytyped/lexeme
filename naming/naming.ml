@@ -71,9 +71,12 @@ let format diagnostic =
 ;;
 
 type t =
-  { declaration : (binding * string list) option
-  ; diagnostics : diagnostic list
-  }
+  | Declaration of
+      { binding : binding
+      ; singulars : string list
+      ; diagnostics : diagnostic list
+      }
+  | Scope of diagnostic list
 
 let reading_of grammar binding phrase =
   match Grammar.is_letter binding.name, binding.letter_exception with
@@ -103,48 +106,60 @@ let judgement_of binding phrase =
   | _ -> []
 ;;
 
-let algebra_of lexicon =
-  let grammar = Grammar.grammar_of lexicon in
-  let bind binding =
-    let phrase = Grammar.read binding.name in
-    let singulars, rules = reading_of grammar binding phrase in
-    let diagnostics =
-      List.map (rules @ judgement_of binding phrase) ~f:(fun rule -> { binding; rule })
-    in
-    { declaration = Some (binding, singulars); diagnostics }
+let bind grammar binding =
+  let phrase = Grammar.read binding.name in
+  let singulars, rules = reading_of grammar binding phrase in
+  let diagnostics =
+    List.map (rules @ judgement_of binding phrase) ~f:(fun rule -> { binding; rule })
   in
-  let enclose children =
-    let declare declarations child =
-      match child.declaration with
-      | None -> declarations
-      | Some (binding, _) -> Map.set declarations ~key:binding.name ~data:binding
-    in
-    (* We first make a later sibling available for a forward pair. Each subsequent binding
-       shadows the previous one as we walk the scope in source order. *)
-    let declarations =
-      List.fold_right children ~init:String.Map.empty ~f:(Fn.flip declare)
-    in
-    let diagnostics =
-      List.folding_map children ~init:declarations ~f:(fun declarations child ->
-        match child.declaration with
-        | None -> declarations, child.diagnostics
-        | Some (binding, singulars) ->
-          let notes =
-            List.filter_map singulars ~f:(fun name ->
-              let%bind.Option singular = Map.find declarations name in
-              match singular.role with
-              | Variable -> None
-              | Function _ -> Some { binding; rule = Plural_lift singular })
-          in
-          declare declarations child, child.diagnostics @ notes)
-    in
-    { declaration = None; diagnostics = List.concat diagnostics }
-  in
-  { bind; enclose }
+  Declaration { binding; singulars; diagnostics }
 ;;
+
+let diagnostics_in = function
+  | Declaration { diagnostics; _ } | Scope diagnostics -> diagnostics
+;;
+
+let notes_of declarations binding singulars =
+  List.filter_map singulars ~f:(fun name ->
+    let%bind.Option singular = Map.find declarations name in
+    match singular.role with
+    | Variable -> None
+    | Function _ -> Some { binding; rule = Plural_lift singular })
+;;
+
+let enclose children =
+  let has_plural = function
+    | Declaration { singulars = _ :: _; _ } -> true
+    | _ -> false
+  in
+  match List.exists children ~f:has_plural with
+  | false -> Scope (List.concat_map children ~f:diagnostics_in)
+  | true ->
+    let declare declarations binding =
+      Map.set declarations ~key:binding.name ~data:binding
+    in
+    (* We seed the scope with its first declaration of each name for forward pairs.
+       Reading the scope in source order then respects every subsequent shadow. *)
+    let declarations =
+      List.fold_right children ~init:String.Map.empty ~f:(fun child declarations ->
+        match child with
+        | Scope _ -> declarations
+        | Declaration { binding; _ } -> declare declarations binding)
+    in
+    let diagnostics =
+      List.folding_map children ~init:declarations ~f:(fun declarations -> function
+        | Scope diagnostics -> declarations, diagnostics
+        | Declaration { binding; singulars; diagnostics } ->
+          ( declare declarations binding
+          , diagnostics @ notes_of declarations binding singulars ))
+    in
+    Scope (List.concat diagnostics)
+;;
+
+let algebra_of lexicon = { bind = bind (Grammar.grammar_of lexicon); enclose }
 
 let diagnostics_of judgement =
   let location_of diagnostic = diagnostic.binding.line, diagnostic.binding.column in
-  List.stable_sort judgement.diagnostics ~compare:(fun first second ->
+  List.stable_sort (diagnostics_in judgement) ~compare:(fun first second ->
     [%compare: int * int] (location_of first) (location_of second))
 ;;
