@@ -1,6 +1,11 @@
 (library
  (name ocaml_syntax)
  (public_name lexeme.ocaml)
- (libraries compiler-libs.common core lexeme.syntax lexeme.typing)
+ (libraries
+  core
+  lexeme.inferred
+  lexeme.syntax
+  lexeme.typing
+  merlin-lib.ocaml_parsing)
  (preprocess
   (pps ppx_jane)))

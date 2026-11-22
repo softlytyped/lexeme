@@ -4,7 +4,8 @@ Lexeme checks the grammar of a name where the program binds it. It reads OCaml
 implementations and interfaces with the OCaml parser and reads C sources and headers
 with Clang.
 
-From the Blackglass checkout, use its opam switch.
+From the Blackglass checkout, use its opam switch. Lexeme uses the native Merlin
+library for the project's OxCaml 5.4 syntax and types.
 
 ```sh
 opam exec --switch=. -- dune exec lexeme
@@ -65,10 +66,12 @@ children. The naming interpreter collects the immediate declarations at each sco
 so it can see a singular sibling declared later and respect rebinding. A new reader
 supplies a fold into this algebra. The grammar and diagnostics are shared.
 
-OCaml function definitions and signatures carry their declared types where available.
-Merlin supplies inferred types from the current source and expands aliases at a
-predicate's binding when needed. Build the OCaml project to make its dependencies and
-ppx configuration available to Merlin. Clang checks the active preprocessor
+The OCaml reader takes the written syntax and the typed syntax from one Merlin
+compiler session. Binding positions connect the two. The typed syntax supplies
+local definitions and expands aliases in their defining environment. A written
+result annotation supplies an answer when a source is only partially typed.
+Build the OCaml project to make its dependencies and ppx configuration available
+to Merlin. Clang checks the active preprocessor
 configuration. Included declarations are checked when their own file is selected.
 Blackglass's C workload uses the Tree-sitter header in its staged corpus.
 

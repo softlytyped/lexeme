@@ -12,11 +12,6 @@ module Source : sig
   val text_of : t -> string
 end
 
-type role =
-  | Function
-  | Variable
-[@@deriving equal, sexp_of]
-
 type result =
   | Boolean
   | Optional_boolean
@@ -25,10 +20,14 @@ type result =
   | Unknown
 [@@deriving equal, sexp_of]
 
+type role =
+  | Variable
+  | Function of result Lazy.t
+[@@deriving sexp_of]
+
 type binding = private
   { name : string
   ; role : role
-  ; result : result Lazy.t
   ; path : string
   ; line : int
   ; column : int
@@ -38,13 +37,7 @@ type binding = private
 
 (** The binding at a byte offset in the source. Returns [None] for compiler-generated
     names with no corresponding spelling at that offset. Lines and columns start at one. *)
-val binding_at
-  :  ?result:result Lazy.t
-  -> Source.t
-  -> offset:int
-  -> name:string
-  -> role
-  -> binding option
+val binding_at : Source.t -> offset:int -> name:string -> role -> binding option
 
 type 'result algebra =
   { bind : binding -> 'result

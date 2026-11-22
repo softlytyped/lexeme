@@ -64,12 +64,12 @@ let fold source ~directories ~definitions algebra =
     Or_error.try_with (fun () -> Yojson.Safe.from_string output)
     |> Or_error.tag ~tag:"expected Clang's declaration tree"
   in
-  let bind ?result node location role =
+  let bind node location role =
     let open Option.Let_syntax in
     let%bind name = text_of node "name" in
     match field location "offset" with
     | Some (`Int offset) ->
-      let%map binding = binding_at ?result source ~offset ~name role in
+      let%map binding = binding_at source ~offset ~name role in
       algebra.bind binding
     | _ -> None
   in
@@ -94,8 +94,7 @@ let fold source ~directories ~definitions algebra =
       let traverse () = descend aliases (children_of node) in
       (match text_of node "kind" with
        | Some "FunctionDecl" ->
-         Option.to_list
-           (bind ~result:(lazy (result_of aliases node)) node location Function)
+         Option.to_list (bind node location (Function (lazy (result_of aliases node))))
          @ [ algebra.enclose (traverse ()) ]
        | Some ("ParmVarDecl" | "VarDecl" | "FieldDecl" | "EnumConstantDecl") ->
          Option.to_list (bind node location Variable) @ traverse ()

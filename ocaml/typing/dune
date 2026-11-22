@@ -1,6 +1,6 @@
 (library
  (name typing)
  (public_name lexeme.typing)
- (libraries compiler-libs.common core lexeme.process lexeme.syntax yojson)
+ (libraries core lexeme.inferred lexeme.syntax merlin-lib.ocaml_parsing)
  (preprocess
   (pps ppx_jane)))

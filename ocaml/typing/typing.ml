@@ -1,76 +1,9 @@
 open! Core
+open Ocaml_parsing
 open Parsetree
 open Binding_syntax
-module Json = Yojson.Safe.Util
 
-let query source command arguments =
-  let open Or_error.Let_syntax in
-  (* We query the source's editor configuration as an external Dune client, even when Dune
-     launched the linter inside a larger workspace. *)
-  let%bind output =
-    Process.read
-      ~input:(Source.text_of source)
-      ~environment:[ "INSIDE_DUNE", None ]
-      "ocamlmerlin"
-      ([ "single"; command; "-filename"; Source.path_of source ] @ arguments)
-  in
-  Or_error.try_with (fun () ->
-    let response = Yojson.Safe.from_string output in
-    Json.member "value" response |> Json.to_list)
-;;
-
-let position_of position =
-  Json.member "line" position |> Json.to_int, Json.member "col" position |> Json.to_int
-;;
-
-let coordinates_of (position : Lexing.position) =
-  position.pos_lnum, position.pos_cnum - position.pos_bol
-;;
-
-type t =
-  { source : Source.t
-  ; annotations : (int * int * string, string) Hashtbl.Poly.t Or_error.t Lazy.t
-  }
-
-let types_of source =
-  let annotations =
-    lazy
-      (let annotations = Hashtbl.Poly.create () in
-       let rec visit node =
-         (match
-            Json.member "name" node, Json.member "type" node, Json.member "selection" node
-          with
-          | `String name, `String annotation, (`Assoc _ as selection) ->
-            let line, column = position_of (Json.member "start" selection) in
-            Hashtbl.set annotations ~key:(line, column, name) ~data:annotation
-          | _ -> ());
-         Json.member "children" node |> Json.to_list |> List.iter ~f:visit
-       in
-       let open Or_error.Let_syntax in
-       let%bind nodes = query source "outline" [] in
-       let%map () = Or_error.try_with (fun () -> List.iter nodes ~f:visit) in
-       annotations)
-  in
-  { source; annotations }
-;;
-
-let parse text =
-  Or_error.try_with (fun () -> Parse.core_type (Lexing.from_string text)) |> Result.ok
-;;
-
-let annotation_at typing (name : string Location.loc) =
-  let line, column = coordinates_of name.loc.loc_start in
-  let%bind.Option annotations = Result.ok (force typing.annotations) in
-  Hashtbl.find annotations (line, column, name.txt) |> Option.bind ~f:parse
-;;
-
-let verify typing =
-  match Stdlib.Lazy.is_val typing.annotations with
-  | false -> Ok ()
-  | true -> Or_error.map (force typing.annotations) ~f:ignore
-;;
-
-let rec is_function annotation =
+let rec is_function annotation : bool =
   match annotation.ptyp_desc with
   | Ptyp_arrow _ -> true
   | Ptyp_poly (_, body) -> is_function body
@@ -79,13 +12,7 @@ let rec is_function annotation =
 
 let rec codomain_of annotation =
   match annotation.ptyp_desc with
-  | Ptyp_poly (_, body) -> codomain_of body
-  | Ptyp_arrow _ ->
-    (* OCaml and OxCaml visit the argument and result types of an arrow in that order. *)
-    let codomain = ref annotation in
-    let base = Ast_iterator.default_iterator in
-    base.typ { base with typ = (fun _ child -> codomain := child) } annotation;
-    codomain_of !codomain
+  | Ptyp_poly (_, body) | Ptyp_arrow (_, _, body, _, _) -> codomain_of body
   | _ -> annotation
 ;;
 
@@ -122,41 +49,64 @@ let result_of annotation =
   | _ -> Other (Format.asprintf "%a" Pprintast.core_type codomain)
 ;;
 
-let expansion_at typing (name : string Location.loc) ~extent =
-  let line, column = coordinates_of name.loc.loc_start in
-  let open Or_error.Let_syntax in
-  let%bind nodes =
-    query
-      typing.source
-      "type-enclosing"
-      [ "-position"; sprintf "%d:%d" line column; "-verbosity"; "2" ]
-  in
-  let regions = name.loc :: Option.to_list extent in
-  Or_error.try_with (fun () ->
-    List.find_map nodes ~f:(fun node ->
-      let start = position_of (Json.member "start" node) in
-      let stop = position_of (Json.member "end" node) in
-      let matches =
-        List.exists regions ~f:(fun (region : Location.t) ->
-          [%equal: int * int] start (coordinates_of region.loc_start)
-          && [%equal: int * int] stop (coordinates_of region.loc_end))
-      in
-      match matches, Json.member "type" node with
-      | true, `String text -> parse text
-      | _ -> None))
+let function_of annotation =
+  Function (lazy (Option.value_map annotation ~default:Unknown ~f:result_of))
 ;;
 
-let result_at ?extent typing name ~annotation =
-  let annotation =
-    match annotation with
-    | Some _ -> annotation
-    | None -> annotation_at typing name
-  in
-  let result = Option.value_map annotation ~default:Unknown ~f:result_of in
-  match result with
-  | Boolean | Optional_boolean | Fallible_boolean -> result
-  | Other _ | Unknown ->
-    (match expansion_at typing name ~extent with
-     | Ok (Some expansion) -> result_of expansion
-     | _ -> result)
+let role_of_annotation annotation =
+  match is_function annotation with
+  | true -> function_of (Some annotation)
+  | false -> Variable
 ;;
+
+let rec role_of_expression expression =
+  match expression.pexp_desc with
+  | Pexp_function (_, signature, _) ->
+    function_of
+      (Option.map signature.ret_type_constraint ~f:(function
+         | Pconstraint annotation | Pcoerce (_, annotation) -> annotation))
+  | Pexp_constraint (_, Some annotation, _) | Pexp_coerce (_, _, annotation) ->
+    role_of_annotation annotation
+  | Pexp_constraint (body, None, _)
+  | Pexp_newtype (_, _, body)
+  | Pexp_let (_, _, _, body)
+  | Pexp_letop { body; _ }
+  | Pexp_open (_, body)
+  | Pexp_sequence (_, body) -> role_of_expression body
+  | _ -> Variable
+;;
+
+let role_at types ?extent annotation (name : string Location.loc) =
+  let inference =
+    List.find_map (name.loc :: Option.to_list extent) ~f:(fun (location : Location.t) ->
+      Inferred.role_at
+        types
+        ~start:location.loc_start.pos_cnum
+        ~stop:location.loc_end.pos_cnum)
+  in
+  match inference, annotation with
+  | Some (Function result), Function annotation ->
+    Function
+      (lazy
+        (match force result with
+         | Unknown -> force annotation
+         | result -> result))
+  | Some (Function _ as role), Variable -> role
+  | Some Variable, _ | None, _ -> annotation
+;;
+
+let role_of_definition types binding =
+  let annotation =
+    match binding.pvb_constraint with
+    | Some (Pvc_constraint { typ = annotation; _ })
+    | Some (Pvc_coercion { coercion = annotation; _ }) -> role_of_annotation annotation
+    | None ->
+      (match binding.pvb_pat.ppat_desc with
+       | Ppat_constraint (_, Some annotation, _) -> role_of_annotation annotation
+       | _ -> role_of_expression binding.pvb_expr)
+  in
+  role_at types ~extent:binding.pvb_pat.ppat_loc annotation
+;;
+
+let role_of_type types annotation = role_at types (role_of_annotation annotation)
+let method_at ?annotation ?extent types = role_at types ?extent (function_of annotation)

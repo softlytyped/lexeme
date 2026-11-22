@@ -1,0 +1,12 @@
+(library
+ (name inferred)
+ (public_name lexeme.inferred)
+ (libraries
+  core
+  lexeme.syntax
+  merlin-lib.kernel
+  merlin-lib.ocaml_merlin_specific
+  merlin-lib.ocaml_parsing
+  merlin-lib.ocaml_typing)
+ (preprocess
+  (pps ppx_jane)))

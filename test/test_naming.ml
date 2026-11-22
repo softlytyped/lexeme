@@ -151,6 +151,20 @@ let entries_of items = items|};
   [%expect {| input.ml:2:5: error[variable-name] entry_of: expected a noun phrase |}]
 ;;
 
+let%expect_test "local declarations share a continuation and stop at sibling operands" =
+  check
+    {|let apply value =
+  ( (let entries_of items = items in entries_of value)
+  , (let entry_of item = item in entry_of value) )
+let run value =
+  let entry_at item = item in
+  let%bind count = value in
+  let entries_at items = items in
+  entries_at count|};
+  [%expect
+    {| input.ml:7:7: note[plural-lift] entries_at: check whether this is a map-like lift of entry_at (line 5) |}]
+;;
+
 let%expect_test "an object field and a typed callback parameter bind variables" =
   check
     {|let apply (multiply : int -> int) number = multiply number
@@ -159,5 +173,27 @@ let table = object val mutable x = 0 method is_empty = true end|};
     {|
     input.ml:1:12: error[variable-name] multiply: expected a noun phrase
     input.ml:2:32: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
+    |}]
+;;
+
+let%expect_test "a predicate is judged by its type through aliases and shadowing" =
+  check
+    ~path:"decisions.mli"
+    {|type decision = bool option
+type operation = int -> decision
+val is_ready : operation
+type bool = int
+val has_rows : unit -> bool
+module Bool : sig type t = string end
+val is_empty : unit -> Bool.t|};
+  check {|let apply value =
+  let does_reduce = String.length in
+  does_reduce value|};
+  [%expect
+    {|
+    decisions.mli:3:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
+    decisions.mli:5:5: error[predicate-result] has_rows: expected a Boolean result, found int
+    decisions.mli:7:5: error[predicate-result] is_empty: expected a Boolean result, found string
+    input.ml:2:7: error[predicate-result] does_reduce: expected a Boolean result, found int
     |}]
 ;;

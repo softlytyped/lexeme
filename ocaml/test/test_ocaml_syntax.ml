@@ -4,7 +4,12 @@ let%expect_test "functions, parameters and patterns all enter through bind" =
   let algebra : Sexp.t Binding_syntax.algebra =
     { bind =
         (fun binding ->
-          [%sexp (binding.name : string), (binding.role : Binding_syntax.role)])
+          let role =
+            match binding.role with
+            | Variable -> "Variable"
+            | Function _ -> "Function"
+          in
+          [%sexp (binding.name : string), (role : string)])
     ; enclose = (fun children -> Sexp.List children)
     }
   in

@@ -85,7 +85,7 @@ let reading_of grammar binding phrase =
        (match Grammar.is_noun grammar phrase with
         | true -> [], []
         | false -> [], [ Variable_name ])
-     | Function ->
+     | Function _ ->
        (match Grammar.function_of grammar phrase with
         | Some singulars -> singulars, []
         | None -> [], [ Function_name ]))
@@ -93,8 +93,8 @@ let reading_of grammar binding phrase =
 
 let judgement_of binding phrase =
   match binding.role, Grammar.is_predicate phrase with
-  | Function, true ->
-    (match force binding.result with
+  | Function result, true ->
+    (match force result with
      | Boolean -> []
      | Optional_boolean -> [ Optional_result ]
      | Fallible_boolean -> [ Fallible_result ]
@@ -132,8 +132,9 @@ let algebra_of lexicon =
           let notes =
             List.filter_map singulars ~f:(fun name ->
               let%bind.Option singular = Map.find declarations name in
-              let%map.Option () = Option.some_if (equal_role singular.role Function) () in
-              { binding; rule = Plural_lift singular })
+              match singular.role with
+              | Variable -> None
+              | Function _ -> Some { binding; rule = Plural_lift singular })
           in
           declare declarations child, child.diagnostics @ notes)
     in

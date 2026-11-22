@@ -14,7 +14,7 @@
   dune
   core
   core_unix
-  merlin
+  (merlin-lib (= 5.6.1-504+ox))
   ppx_jane
   uucp
   yojson))

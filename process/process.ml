@@ -17,14 +17,13 @@ let with_input input reader =
         In_channel.with_file path ~f:reader)
 ;;
 
-let read ?input ?(environment = []) program arguments =
+let read ?input program arguments =
   let open Or_error.Let_syntax in
   let%bind output, status =
     Or_error.try_with (fun () ->
       with_input input (fun channel ->
         let process =
           Core_unix.create_process_with_fds
-            ~env:(`Override environment)
             ~prog:program
             ~args:arguments
             ~stdin:(Use_this (Core_unix.descr_of_in_channel channel))

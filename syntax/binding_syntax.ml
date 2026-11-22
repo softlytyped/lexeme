@@ -16,11 +16,6 @@ module Source = struct
   let text_of source = source.text
 end
 
-type role =
-  | Function
-  | Variable
-[@@deriving equal, sexp_of]
-
 type result =
   | Boolean
   | Optional_boolean
@@ -29,10 +24,14 @@ type result =
   | Unknown
 [@@deriving equal, sexp_of]
 
+type role =
+  | Variable
+  | Function of result Lazy.t
+[@@deriving sexp_of]
+
 type binding =
   { name : string
   ; role : role
-  ; result : result Lazy.t
   ; path : string
   ; line : int
   ; column : int
@@ -64,7 +63,7 @@ let exception_at text ~offset ~opening ~closing =
   Option.some_if ((not (String.is_empty reason)) && not (String.mem comment '\n')) reason
 ;;
 
-let binding_at ?(result = lazy Unknown) (source : Source.t) ~offset ~name role =
+let binding_at (source : Source.t) ~offset ~name role =
   let open Option.Let_syntax in
   let%bind () =
     Option.some_if
@@ -93,7 +92,6 @@ let binding_at ?(result = lazy Unknown) (source : Source.t) ~offset ~name role =
   Some
     { name
     ; role
-    ; result
     ; path = source.path
     ; line = row + 1
     ; column = offset - source.starts.(row) + 1
