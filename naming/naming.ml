@@ -75,24 +75,24 @@ type t =
   ; diagnostics : diagnostic list
   }
 
-let reading_of lexicon binding =
+let reading_of grammar binding phrase =
   match Grammar.is_letter binding.name, binding.letter_exception with
   | true, None -> [], [ Single_letter ]
   | true, Some _ -> [], []
   | false, _ ->
-    (match Grammar.read lexicon binding.role binding.name with
-     | Some reading -> Grammar.singulars_of reading, []
-     | None ->
-       let rule =
-         match binding.role with
-         | Function -> Function_name
-         | Variable -> Variable_name
-       in
-       [], [ rule ])
+    (match binding.role with
+     | Variable ->
+       (match Grammar.is_noun grammar phrase with
+        | true -> [], []
+        | false -> [], [ Variable_name ])
+     | Function ->
+       (match Grammar.function_of grammar phrase with
+        | Some singulars -> singulars, []
+        | None -> [], [ Function_name ]))
 ;;
 
-let judgement_of binding =
-  match binding.role, Grammar.is_predicate binding.name with
+let judgement_of binding phrase =
+  match binding.role, Grammar.is_predicate phrase with
   | Function, true ->
     (match force binding.result with
      | Boolean -> []
@@ -104,10 +104,12 @@ let judgement_of binding =
 ;;
 
 let algebra_of lexicon =
+  let grammar = Grammar.grammar_of lexicon in
   let bind binding =
-    let singulars, rules = reading_of lexicon binding in
+    let phrase = Grammar.read binding.name in
+    let singulars, rules = reading_of grammar binding phrase in
     let diagnostics =
-      List.map (rules @ judgement_of binding) ~f:(fun rule -> { binding; rule })
+      List.map (rules @ judgement_of binding phrase) ~f:(fun rule -> { binding; rule })
     in
     { declaration = Some (binding, singulars); diagnostics }
   in

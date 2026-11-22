@@ -1,18 +1,22 @@
-(** The grammar of a value name, read in the role of its binding. *)
+(** The English phrases that can name a binding. *)
 
 open! Core
 
-(** The grammatical reading of a name. Its singulars replace only the head of its subject
-    noun phrase, keeping modifiers, prepositions and complements. *)
 type t
 
-val singulars_of : t -> string list
+val grammar_of : Lexicon.t -> t
 
-(** Returns a reading when the words form a name of the given role. *)
-val read : Lexicon.t -> Binding_syntax.role -> string -> t option
+type name
 
-(** Tests for one letter beneath OCaml's unused-variable prefix and prime suffix. *)
+val read : string -> name
+val is_noun : t -> name -> bool
+
+(** Returns the possible singular spellings of a function's subject. A verb phrase, a
+    predicate and a prepositional name without a subject have no singulars. *)
+val function_of : t -> name -> string list option
+
+(** Whether the initial word introduces a predicate, even if its complement is malformed. *)
+val is_predicate : name -> bool
+
+(** Tests for a single letter beneath an unused-name prefix and prime suffix. *)
 val is_letter : string -> bool
-
-(** Tests whether a name opens with a predicate auxiliary. *)
-val is_predicate : string -> bool

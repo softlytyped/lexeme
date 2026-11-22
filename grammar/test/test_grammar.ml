@@ -1,17 +1,16 @@
 open! Core
 
 let lexicon = force Lexicon.english
+let grammar = Grammar.grammar_of lexicon
 
 let%expect_test "the grammar distinguishes root verbs, noun heads and their modifiers" =
-  let read role names =
+  let read interpretation names =
     List.iter names ~f:(fun name ->
-      let reading =
-        Grammar.read lexicon role name |> Option.map ~f:Grammar.singulars_of
-      in
+      let reading = interpretation (Grammar.read name) in
       print_s [%sexp (name : string), (reading : string list option)])
   in
   read
-    Function
+    (Grammar.function_of grammar)
     [ "apply"
     ; "applies"
     ; "contract_exactly"
@@ -36,11 +35,12 @@ let%expect_test "the grammar distinguishes root verbs, noun heads and their modi
     ; "quickly_of"
     ];
   read
-    Variable
+    (fun phrase -> Option.some_if (Grammar.is_noun grammar phrase) [])
     [ "matrix"
     ; "sparse_matrix"
     ; "register_bits"
     ; "strictly_positive_integer"
+    ; "exclusive_or"
     ; "start_of_line"
     ; "exactly"
     ; "multiply"
@@ -75,6 +75,7 @@ let%expect_test "the grammar distinguishes root verbs, noun heads and their modi
     (sparse_matrix (()))
     (register_bits (()))
     (strictly_positive_integer (()))
+    (exclusive_or (()))
     (start_of_line (()))
     (exactly ())
     (multiply ())
@@ -102,9 +103,8 @@ let%expect_test "a singular reading preserves the whole frame around the head" =
     ~sexp_of:[%sexp_of: string * string]
     ~f:(fun (plural, singular) ->
       [%test_result: bool]
-        (Grammar.read lexicon Function plural
-         |> Option.exists ~f:(fun reading ->
-           List.mem (Grammar.singulars_of reading) singular ~equal:String.equal))
+        (Grammar.function_of grammar (Grammar.read plural)
+         |> Option.exists ~f:(List.exists ~f:(String.equal singular)))
         ~expect:true);
   [%expect {| |}]
 ;;
@@ -125,21 +125,38 @@ let%expect_test "a letter keeps its length under the spelling conventions of a b
     |}]
 ;;
 
+let%expect_test "a singular keeps the spelling outside its head" =
+  List.iter
+    [ "_Sparse_MATRICES_at_Indices'"; "__Entries_OF'"; "Entries_of_entries" ]
+    ~f:(fun name ->
+      print_s
+        [%sexp (Grammar.function_of grammar (Grammar.read name) : string list option)]);
+  [%expect
+    {|
+    ((_Sparse_MATRIX_at_Indices'))
+    ((__Entry_OF'))
+    ((Entry_of_entries))
+    |}]
+;;
+
 let%expect_test "a project can teach all four parts of speech and an irregular plural" =
   let vocabulary =
     Lexicon.vocabulary_of_sexp
       (Sexp.of_string
          "((nouns (quux)) (verbs (frobnicate)) (adjectives (grue)) (adverbs (gruelike)) \
-          (plurals ((quuxen quux))))")
+          (plurals ((quuxen quux) (sheep sheep))))")
   in
   let vocabulary = Or_error.ok_exn (Lexicon.extend lexicon vocabulary) in
-  List.iter [ "quuxen_of"; "grue_quux_of"; "gruelike_frobnicate" ] ~f:(fun name ->
-    print_s
-      [%sexp
-        (Grammar.read vocabulary Function name |> Option.map ~f:Grammar.singulars_of
-         : string list option)]);
+  List.iter
+    [ "quuxen_of"; "grue_quux_of"; "gruelike_frobnicate"; "sheep_of" ]
+    ~f:(fun name ->
+      print_s
+        [%sexp
+          (Grammar.function_of (Grammar.grammar_of vocabulary) (Grammar.read name)
+           : string list option)]);
   [%expect {|
     ((quux_of))
+    (())
     (())
     (())
     |}]
