@@ -1,0 +1,6 @@
+(library
+ (name test_ocaml_syntax)
+ (libraries core lexeme.ocaml lexeme.syntax)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))

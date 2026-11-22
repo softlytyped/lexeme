@@ -1,0 +1,6 @@
+(library
+ (name process)
+ (public_name lexeme.process)
+ (libraries core core_unix)
+ (preprocess
+  (pps ppx_jane)))

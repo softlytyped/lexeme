@@ -1,0 +1,6 @@
+(library
+ (name typing)
+ (public_name lexeme.typing)
+ (libraries compiler-libs.common core lexeme.process lexeme.syntax yojson)
+ (preprocess
+  (pps ppx_jane)))

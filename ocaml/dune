@@ -1,0 +1,6 @@
+(library
+ (name ocaml_syntax)
+ (public_name lexeme.ocaml)
+ (libraries compiler-libs.common core lexeme.syntax lexeme.typing)
+ (preprocess
+  (pps ppx_jane)))
