@@ -3,6 +3,7 @@ opam-version: "2.0"
 synopsis: "A linter for the names and definitions of OCaml and C programs"
 description:
   "Lexeme reads each name where a program binds it and asks whether the name reads as English for what it names, and checks the length of each function and how its body branches."
+license: "MIT"
 homepage: "https://github.com/softlytyped/lexeme"
 bug-reports: "https://github.com/softlytyped/lexeme/issues"
 depends: [

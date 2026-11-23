@@ -9,6 +9,8 @@
 (source
  (github softlytyped/lexeme))
 
+(license MIT)
+
 (package
  (name lexeme)
  (synopsis "A linter for the names and definitions of OCaml and C programs")

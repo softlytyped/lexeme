@@ -137,3 +137,9 @@ distributes, run
 ```sh
 bash lexicon/english/extract.sh /path/to/wordnet.zip > lexicon/english/wordnet.words
 ```
+
+## License
+
+Lexeme is free software under the MIT License, which allows any use, commercial or not,
+so long as the license notice stays with the software. The WordNet table keeps the
+WordNet 3.0 license, which is in `lexicon/english`.
