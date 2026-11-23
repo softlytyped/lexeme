@@ -14,25 +14,6 @@ module Severity = struct
   ;;
 end
 
-module Limit = struct
-  type t =
-    | Soft
-    | Hard
-    | Reject
-
-  let severity_of = function
-    | Soft -> Severity.Note
-    | Hard -> Warning
-    | Reject -> Error
-  ;;
-
-  let to_string = function
-    | Soft -> "the soft limit"
-    | Hard -> "the hard limit"
-    | Reject -> "the limit"
-  ;;
-end
-
 module Rule = struct
   module Name = struct
     type t =
@@ -41,6 +22,9 @@ module Rule = struct
       | Function
       | Predicate
       | Command
+      | Field
+      | Type
+      | Constructor
 
     let code_of = function
       | Single_letter -> "single-letter"
@@ -48,16 +32,19 @@ module Rule = struct
       | Function -> "function-name"
       | Predicate -> "predicate-name"
       | Command -> "command-name"
+      | Field -> "field-name"
+      | Type -> "type-name"
+      | Constructor -> "constructor-name"
     ;;
 
     let message_of = function
       | Single_letter ->
         "use a longer name or add a lexeme: allow-letter comment with a reason"
-      | Variable -> "expected a noun phrase"
+      | Variable | Field | Type -> "expected a noun phrase"
       | Function -> "expected a root verb phrase, a prepositional name or a predicate"
-      | Predicate ->
-        "expected a predicate such as is_empty or has_entries for a Boolean result"
+      | Predicate -> "expected a predicate such as is_empty or has_entries for a Boolean"
       | Command -> "expected a root verb phrase for a function that gives nothing"
+      | Constructor -> "expected a noun phrase or an adjective phrase"
     ;;
   end
 
@@ -95,26 +82,72 @@ module Rule = struct
     ;;
   end
 
+  module Branch = struct
+    type t =
+      | Boolean_match
+      | Boolean_tuple of int
+      | Lone_boolean_match
+      | Several_ifs of Source.Position.t list
+      | Late_guard
+
+    let severity_of = function
+      | Boolean_match | Late_guard -> Severity.Note
+      | Lone_boolean_match | Several_ifs _ -> Warning
+      | Boolean_tuple _ -> Error
+    ;;
+
+    let code_of = function
+      | Boolean_match -> "boolean-match"
+      | Boolean_tuple _ -> "boolean-tuple"
+      | Lone_boolean_match -> "lone-boolean-match"
+      | Several_ifs _ -> "if-else"
+      | Late_guard -> "late-guard"
+    ;;
+
+    let lines_of positions =
+      List.map positions ~f:(fun (position : Source.Position.t) ->
+        Int.to_string position.line)
+      |> String.concat ~sep:", "
+    ;;
+
+    let message_of = function
+      | Boolean_match -> "could a variant name the cases of this Boolean?"
+      | Boolean_tuple count ->
+        sprintf "matches %d Booleans at once: parse, don't validate, with a variant" count
+      | Lone_boolean_match ->
+        "the one Boolean decision of its function reads as an if-else"
+      | Several_ifs positions ->
+        sprintf
+          "has if-else on lines %s: keep at most one, and match the rest"
+          (lines_of positions)
+      | Late_guard ->
+        "this precondition uses none of the work before it: could it come first?"
+    ;;
+  end
+
   type t =
     | Name of Name.t
     | Answer of Answer.t
+    | Branch of Branch.t
     | Plural_lift of Binding.t
     | Function_length of
         { lines : int
-        ; limit : Limit.t
         ; bound : int
+        ; severity : Severity.t
         }
 
   let severity_of = function
     | Name _ -> Severity.Error
     | Answer answer -> Answer.severity_of answer
+    | Branch branch -> Branch.severity_of branch
     | Plural_lift _ -> Note
-    | Function_length { limit; _ } -> Limit.severity_of limit
+    | Function_length { severity; _ } -> severity
   ;;
 
   let code_of = function
     | Name name -> Name.code_of name
     | Answer answer -> Answer.code_of answer
+    | Branch branch -> Branch.code_of branch
     | Plural_lift _ -> "plural-lift"
     | Function_length _ -> "function-length"
   ;;
@@ -122,13 +155,14 @@ module Rule = struct
   let message_of = function
     | Name name -> Name.message_of name
     | Answer answer -> Answer.message_of answer
+    | Branch branch -> Branch.message_of branch
     | Plural_lift (singular : Binding.t) ->
       sprintf
         "check whether this is a map-like lift of %s (line %d)"
         singular.name
         singular.site.position.line
-    | Function_length { lines; limit; bound } ->
-      sprintf "%d lines of code, past %s of %d" lines (Limit.to_string limit) bound
+    | Function_length { lines; bound; _ } ->
+      sprintf "%d lines of code, more than %d" lines bound
   ;;
 end
 
@@ -139,9 +173,10 @@ type t =
   }
 
 let create ~site ~subject rule = { site; subject; rule }
+let of_binding (binding : Binding.t) = create ~site:binding.site ~subject:binding.name
 
-let of_binding (binding : Binding.t) rule =
-  create ~site:binding.site ~subject:binding.name rule
+let of_decision (decision : Decision.t) =
+  create ~site:decision.site ~subject:decision.keyword
 ;;
 
 let severity_of diagnostic = Rule.severity_of diagnostic.rule

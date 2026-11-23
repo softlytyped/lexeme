@@ -1,23 +1,51 @@
 open! Core
 
+let role_of (binding : Binding.t) =
+  match binding.role with
+  | Variable -> "Variable"
+  | Function _ -> "Function"
+  | Field _ -> "Field"
+  | Type -> "Type"
+  | Constructor -> "Constructor"
+  | Test -> "Test"
+;;
+
 let algebra : Sexp.t Syntax.algebra =
-  { declare =
-      (fun binding ->
-        match binding.role with
-        | Variable -> [%sexp (binding.name : string), "Variable"]
-        | Function _ -> [%sexp (binding.name : string), "Function"])
+  { declare = (fun binding -> [%sexp (binding.name : string), (role_of binding : string)])
+  ; decide = (fun decision -> [%sexp (decision.keyword : string)])
   ; enclose = (fun children -> Sexp.List children)
+  ; define =
+      (fun binding children ->
+        [%sexp
+          (binding.name : string), (role_of binding : string), (children : Sexp.t list)])
   }
 ;;
 
-let%expect_test "functions, parameters and patterns all enter through declare" =
-  let text =
-    "let rec apply ~value = function Some (item as element) -> item | None -> value"
-  in
+let print_program text =
   Ocaml_syntax.read ~path:"input.ml" text
   |> Or_error.ok_exn
   |> Syntax.fold algebra
-  |> print_s;
+  |> print_s
+;;
+
+let%expect_test "a function defines its body, where its parameters, patterns and \
+                 decisions are"
+  =
+  print_program
+    "let rec apply ~value = function Some (item as element) -> item | None -> value";
   [%expect
-    {| ((apply Function) ((value Variable) ((item Variable) (element Variable)))) |}]
+    {|
+    ((apply Function
+      ((function (value Variable) ((item Variable) (element Variable))))))
+    |}]
+;;
+
+let%expect_test "types declare their constructors and fields in a scope of their own" =
+  print_program
+    "type shape = Circle of { radius : float } | Square\nlet%test_unit \"check\" = ()";
+  [%expect
+    {|
+    ((shape Type) ((Circle Constructor) (radius Field) (Square Constructor))
+     ("\"check\"" Test ()))
+    |}]
 ;;

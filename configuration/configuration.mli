@@ -5,7 +5,8 @@ open! Core
 type t =
   { vocabulary : Lexicon.Vocabulary.t
   ; function_lines : Judgement.Limits.t
-  ; exemptions : string list (** names not judged as names, [main] and [equal] by default *)
+  ; exemptions : string list
+  (** names not judged as names, [main] and [equal] by default *)
   ; directories : string list (** C include directories *)
   ; definitions : string list (** C preprocessor macros *)
   }

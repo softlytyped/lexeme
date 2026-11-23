@@ -192,6 +192,7 @@ val is_empty : unit -> Bool.t|};
   [%expect
     {|
     decisions.mli:3:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
+    decisions.mli:4:6: error[type-name] bool: expected a noun phrase
     decisions.mli:5:5: error[predicate-result] has_rows: expected a Boolean result, found int
     decisions.mli:7:5: error[predicate-result] is_empty: expected a Boolean result, found string
     input.ml:2:7: error[predicate-result] does_reduce: expected a Boolean result, found int
@@ -211,10 +212,10 @@ val size_of : int list -> int|};
 let report count = ignore count|};
   [%expect
     {|
-    agreement.mli:1:5: error[predicate-name] contains: expected a predicate such as is_empty or has_entries for a Boolean result
+    agreement.mli:1:5: error[predicate-name] contains: expected a predicate such as is_empty or has_entries for a Boolean
     agreement.mli:3:5: error[command-name] entries_of: expected a root verb phrase for a function that gives nothing
     agreement.mli:4:5: error[command-name] of_int: expected a root verb phrase for a function that gives nothing
-    input.ml:1:5: error[predicate-name] matches: expected a predicate such as is_empty or has_entries for a Boolean result
+    input.ml:1:5: error[predicate-name] matches: expected a predicate such as is_empty or has_entries for a Boolean
     |}]
 ;;
 
@@ -229,11 +230,11 @@ let%expect_test "a function past each limit earns a note, a warning and then an 
   List.iter [ 10; 11; 20; 21; 30; 31 ] ~f:(fun lines -> check (function_of_length lines));
   [%expect
     {|
-    input.ml:1:5: note[function-length] apply: 11 lines of code, past the soft limit of 10
-    input.ml:1:5: note[function-length] apply: 20 lines of code, past the soft limit of 10
-    input.ml:1:5: warning[function-length] apply: 21 lines of code, past the hard limit of 20
-    input.ml:1:5: warning[function-length] apply: 30 lines of code, past the hard limit of 20
-    input.ml:1:5: error[function-length] apply: 31 lines of code, past the limit of 30
+    input.ml:1:5: note[function-length] apply: 11 lines of code, more than 10
+    input.ml:1:5: note[function-length] apply: 20 lines of code, more than 10
+    input.ml:1:5: warning[function-length] apply: 21 lines of code, more than 20
+    input.ml:1:5: warning[function-length] apply: 30 lines of code, more than 20
+    input.ml:1:5: error[function-length] apply: 31 lines of code, more than 30
     |}]
 ;;
 
@@ -241,15 +242,14 @@ let%expect_test "an exemption spares a name but not its length" =
   check {|let main () = ()|};
   check
     (String.substr_replace_first (function_of_length 11) ~pattern:"apply" ~with_:"main");
-  [%expect
-    {| input.ml:1:5: note[function-length] main: 11 lines of code, past the soft limit of 10 |}]
+  [%expect {| input.ml:1:5: note[function-length] main: 11 lines of code, more than 10 |}]
 ;;
 
-let%expect_test "limits must rise from soft to hard to reject" =
+let%expect_test "limits must rise from note to warning to error" =
   List.iter
-    [ "((soft 10) (hard 20) (reject 30))"
-    ; "((soft 20) (hard 10) (reject 30))"
-    ; "((soft 0) (hard 0) (reject 0))"
+    [ "((note 10) (warning 20) (error 30))"
+    ; "((note 20) (warning 10) (error 30))"
+    ; "((note 0) (warning 0) (error 0))"
     ]
     ~f:(fun text ->
       let limits =
@@ -261,4 +261,71 @@ let%expect_test "limits must rise from soft to hard to reject" =
     false
     false
     |}]
+;;
+
+let%expect_test "types and fields are nouns, and a field that holds a Boolean is a \
+                 predicate"
+  =
+  check
+    ~path:"shapes.mli"
+    {|type t
+type matrix = { rows : int; is_square : bool; ready : bool; transpose : int -> int }
+type quickly
+type x
+type verdict = Accepted | Rejected | Strictly_positive | Quickly | Late of int|};
+  [%expect
+    {|
+    shapes.mli:2:47: error[predicate-name] ready: expected a predicate such as is_empty or has_entries for a Boolean
+    shapes.mli:3:6: error[type-name] quickly: expected a noun phrase
+    shapes.mli:4:6: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
+    shapes.mli:5:58: error[constructor-name] Quickly: expected a noun phrase or an adjective phrase
+    |}]
+;;
+
+let%expect_test "a function body branches on Booleans with at most one if-else" =
+  check
+    {|let decide flag = match flag with true -> 1 | false -> 0
+let choose flag = if flag then 1 else 0
+let compare first second = if first then 1 else if second then 2 else 3
+let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3
+let pick flag value = match flag, value with true, Some _ -> 1 | _ -> 0
+let count items = match items with [] -> 0 | _ :: _ -> 1|};
+  [%expect
+    {|
+    input.ml:1:19: warning[lone-boolean-match] match: the one Boolean decision of its function reads as an if-else
+    input.ml:1:19: note[boolean-match] match: could a variant name the cases of this Boolean?
+    input.ml:3:5: warning[if-else] compare: has if-else on lines 3, 3: keep at most one, and match the rest
+    input.ml:4:29: error[boolean-tuple] match: matches 2 Booleans at once: parse, don't validate, with a variant
+    input.ml:5:23: note[boolean-match] match: could a variant name the cases of this Boolean?
+    |}]
+;;
+
+let%expect_test "a guard after work that it does not use asks to come first" =
+  check
+    {|let total items limit =
+  let sum = List.fold items ~init:0 ~f:( + ) in
+  match limit with
+  | None -> Error "no limit"
+  | Some bound -> Ok (min sum bound)
+let scale items factor =
+  let sum = List.fold items ~init:0 ~f:( + ) in
+  if sum > factor then sum else factor
+let check items =
+  let increment item = item + 1 in
+  if List.is_empty items then Error "empty" else Ok (List.map items ~f:increment)|};
+  [%expect
+    {|
+    input.ml:3:3: note[late-guard] match: this precondition uses none of the work before it: could it come first?
+    input.ml:10:7: error[function-name] increment: expected a root verb phrase, a prepositional name or a predicate
+    |}]
+;;
+
+let%expect_test "an inline test has more room than a function" =
+  let test_of_length lines =
+    let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore 0;\n") in
+    "let%expect_test \"example\" =\n" ^ String.concat steps ^ "  ()\n"
+  in
+  List.iter [ 15; 16 ] ~f:(fun lines -> check (test_of_length lines));
+  [%expect
+    {| input.ml:1:1: note[function-length] "example": 16 lines of code, more than 15 |}]
 ;;

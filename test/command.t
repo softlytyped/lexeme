@@ -65,3 +65,31 @@ Compiler-inferred predicate types apply to local definitions, aliases and C type
   $ lexeme
   owned.ml:1:11: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
   [1]
+
+C types, fields and enumeration constants are judged by their roles, and a function's
+definition by its length. A Boolean field is a predicate, and main keeps its name.
+
+  $ cat > shapes.c <<'EOF'
+  > #include <stdbool.h>
+  > typedef struct reading { int count; bool ready; bool is_open; } reading;
+  > enum colour { RED, QUICKLY };
+  > void report(int count);
+  > int count_of(int total) {
+  >   int sum = total;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   sum += 1;
+  >   return sum;
+  > }
+  > int main(void) { return 0; }
+  > EOF
+  $ lexeme shapes.c
+  shapes.c:2:42: error[predicate-name] ready: expected a predicate such as is_empty or has_entries for a Boolean
+  shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase or an adjective phrase
+  shapes.c:5:5: note[function-length] count_of: 12 lines of code, more than 10
+  [1]

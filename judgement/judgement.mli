@@ -1,14 +1,16 @@
-(** The interpretation of a program's bindings and scopes as diagnostics. *)
+(** The interpretation of a program's names, decisions and scopes as diagnostics. *)
 
 open! Core
 
 module Limits : sig
-  (** A function definition with more than [soft] lines of code earns a note, more than
-      [hard] a warning and more than [reject] an error. *)
+  (** A definition with more lines of code than [note] earns a note, more than [warning] a
+      warning and more than [error] an error. An inline test may have [test_allowance]
+      more lines at each bound. *)
   type t =
-    { soft : int
-    ; hard : int
-    ; reject : int
+    { note : int
+    ; warning : int
+    ; error : int
+    ; test_allowance : int
     }
   [@@deriving of_sexp]
 
@@ -17,9 +19,10 @@ end
 
 type t
 
-(** Returns the algebra that judges each binding by its name, its type and its length, and
-    each scope by the plural lifts among its declarations. A name in [exemptions] is not
-    judged as a name, though its definition's length still is. *)
+(** Returns the algebra that judges each binding by its name, its type and its length,
+    each function body by its decisions, and each scope by the plural lifts among its
+    declarations. A name in [exemptions] is not judged as a name, though its definition
+    still is. *)
 val algebra_of
   :  Lexicon.t
   -> limits:Limits.t

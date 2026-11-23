@@ -2,7 +2,9 @@
  (name ocaml_syntax)
  (libraries
   binding
+  branching
   core
+  decision
   merlin-lib.ocaml_parsing
   session
   source

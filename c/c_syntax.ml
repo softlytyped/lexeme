@@ -150,15 +150,16 @@ let codomain_of aliases declaration =
      | Some _ | None -> Other spelling)
 ;;
 
-let declaration_of source node ?definition role =
-  let binding =
-    let%bind.Option name = text_of node "name" in
-    let%bind.Option offset =
-      Option.bind (field_of node "loc") ~f:(integer_at ~name:"offset")
-    in
-    Binding.find source ~offset ?definition ~name role
+let binding_of source node ?definition role =
+  let%bind.Option name = text_of node "name" in
+  let%bind.Option offset =
+    Option.bind (field_of node "loc") ~f:(integer_at ~name:"offset")
   in
-  Option.value_map binding ~default:(return ()) ~f:Syntax.declare
+  Binding.find source ~offset ?definition ~name role
+;;
+
+let declaration_of source node role =
+  Option.value_map (binding_of source node role) ~default:(return ()) ~f:Syntax.declare
 ;;
 
 let has_body node =
@@ -166,13 +167,24 @@ let has_body node =
     Option.equal String.equal (text_of child "kind") (Some "CompoundStmt"))
 ;;
 
-let function_of source aliases node =
-  let definition =
-    match has_body node with
-    | true -> extent_of node
-    | false -> None
+(* A function's definition defines its body, and a prototype declares the function before
+   its parameters' scope. *)
+let function_of source aliases node ~body =
+  let role = Binding.Role.Function (lazy (codomain_of aliases node)) in
+  let definition = if has_body node then extent_of node else None in
+  match binding_of source node ?definition role, definition with
+  | Some binding, Some _ -> Syntax.define binding body
+  | Some binding, None -> Syntax.declare binding >>= fun () -> Syntax.enclose body
+  | None, _ -> Syntax.enclose body
+;;
+
+let field_of_node aliases node =
+  let expand spelling =
+    expand aliases ~visited:String.Set.empty (String.strip spelling)
   in
-  declaration_of source node ?definition (Function (lazy (codomain_of aliases node)))
+  let codomain_of spelling = codomain_of_result (expand spelling) in
+  Binding.Role.Field
+    (lazy (Option.value_map (spelling_of node) ~default:Codomain.Unknown ~f:codomain_of))
 ;;
 
 let rec visit_all source aliases nodes =
@@ -183,20 +195,21 @@ let rec visit_all source aliases nodes =
     visit_all source (alias_after aliases node) rest
 
 and visit source aliases node =
-  match is_spelled_here node with
-  | false -> return ()
-  | true -> visit_declaration source aliases node
+  if is_spelled_here node then dispatch source aliases node else return ()
 
-and visit_declaration source aliases node =
+(* Enumeration constants share the enclosing scope, and a structure's fields do not. *)
+and dispatch source aliases node =
   let descend () = visit_all source aliases (children_of node) in
+  let declare role = declaration_of source node role >>= descend in
   match text_of node "kind" with
-  | Some "FunctionDecl" ->
-    let%bind () = function_of source aliases node in
-    Syntax.enclose (descend ())
-  | Some ("ParmVarDecl" | "VarDecl" | "FieldDecl" | "EnumConstantDecl") ->
-    let%bind () = declaration_of source node Variable in
-    descend ()
-  | Some ("CompoundStmt" | "ForStmt" | "RecordDecl") -> Syntax.enclose (descend ())
+  | Some "FunctionDecl" -> function_of source aliases node ~body:(descend ())
+  | Some ("ParmVarDecl" | "VarDecl") -> declare Variable
+  | Some "FieldDecl" -> declare (field_of_node aliases node)
+  | Some "EnumConstantDecl" -> declare Constructor
+  | Some ("TypedefDecl" | "EnumDecl") -> declare Type
+  | Some "RecordDecl" ->
+    declaration_of source node Type >>= fun () -> Syntax.enclose (descend ())
+  | Some ("CompoundStmt" | "ForStmt") -> Syntax.enclose (descend ())
   | _ -> descend ()
 ;;
 

@@ -1,0 +1,11 @@
+(library
+ (name branching)
+ (libraries
+  core
+  decision
+  merlin-lib.kernel
+  merlin-lib.ocaml_parsing
+  session
+  source)
+ (preprocess
+  (pps ppx_jane)))

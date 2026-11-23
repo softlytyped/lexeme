@@ -1,0 +1,23 @@
+open! Core
+
+module Form = struct
+  type t =
+    | If
+    | Boolean_match
+    | Tuple_match of int
+    | Other_match
+  [@@deriving equal]
+end
+
+module Placement = struct
+  type t =
+    | Late
+    | Settled
+end
+
+type t =
+  { site : Source.Site.t
+  ; keyword : string
+  ; form : Form.t
+  ; placement : Placement.t
+  }

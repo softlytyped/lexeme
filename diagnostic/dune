@@ -1,5 +1,5 @@
 (library
  (name diagnostic)
- (libraries binding core source)
+ (libraries binding core decision source)
  (preprocess
   (pps ppx_jane)))

@@ -7,6 +7,7 @@ let base = Ast_iterator.default_iterator
 type context =
   { source : Source.t
   ; session : Session.t
+  ; late_guards : Source.Extent.Set.t
   ; recorder : Syntax.Recorder.t
   }
 
@@ -20,13 +21,27 @@ let is_identifier spelling =
     || Char.( > ) letter '\127')
 ;;
 
-let bind context ?definition role (name : string Location.loc) =
+let binding_of context ?definition role (name : string Location.loc) =
   let offset = name.loc.loc_start.pos_cnum in
-  match is_identifier name.txt with
-  | false -> ()
-  | true ->
-    Binding.find context.source ~offset ?definition ~name:name.txt role
-    |> Option.iter ~f:(Syntax.Recorder.declare context.recorder)
+  if is_identifier name.txt
+  then Binding.find context.source ~offset ?definition ~name:name.txt role
+  else None
+;;
+
+let declare context ?definition role name =
+  binding_of context ?definition role name
+  |> Option.iter ~f:(Syntax.Recorder.declare context.recorder)
+;;
+
+(* A function's binding defines its body, and any other binding is declared before it. *)
+let introduce context binding ~body =
+  match (binding : Binding.t option) with
+  | Some ({ role = Function _ | Test; _ } as binding) ->
+    Syntax.Recorder.define context.recorder binding body
+  | Some binding ->
+    Syntax.Recorder.declare context.recorder binding;
+    body ()
+  | None -> body ()
 ;;
 
 let rec pattern ~binder (iterator : Ast_iterator.iterator) node =
@@ -39,81 +54,177 @@ let rec pattern ~binder (iterator : Ast_iterator.iterator) node =
   | _ -> base.pat iterator node
 ;;
 
-let value_binding context (iterator : Ast_iterator.iterator) definition =
+let rec name_of_pattern node =
+  match node.ppat_desc with
+  | Ppat_var name -> Some name
+  | Ppat_constraint (body, _, _) -> name_of_pattern body
+  | _ -> None
+;;
+
+let define context (iterator : Ast_iterator.iterator) definition =
   let role_of = Typing.role_of_definition context.session definition in
-  let extent = Session.extent_of definition.pvb_loc in
-  pattern iterator definition.pvb_pat ~binder:(fun name ->
-    bind context ~definition:extent (role_of name) name);
-  iterator.expr iterator definition.pvb_expr
+  let descend () = iterator.expr iterator definition.pvb_expr in
+  match name_of_pattern definition.pvb_pat with
+  | Some name ->
+    let extent = Session.extent_of definition.pvb_loc in
+    introduce
+      context
+      (binding_of context ~definition:extent (role_of name) name)
+      ~body:descend
+  | None ->
+    pattern iterator definition.pvb_pat ~binder:(fun name ->
+      declare context (role_of name) name);
+    descend ()
 ;;
 
-let value_description context _ declaration =
-  let name = declaration.pval_name in
-  bind context (Typing.role_of_type context.session declaration.pval_type name) name
-;;
-
-let label_declaration context _ label =
-  bind
+let specify context _ description =
+  let name = description.pval_name in
+  declare
     context
-    (Typing.role_of_type context.session label.pld_type label.pld_name)
+    (Typing.role_of_description context.session description.pval_type name)
+    name
+;;
+
+let label context _ label =
+  declare
+    context
+    (Typing.role_of_label context.session label.pld_type label.pld_name)
     label.pld_name
 ;;
 
-let class_field context (iterator : Ast_iterator.iterator) field =
-  let session = context.session in
-  (match field.pcf_desc with
-   | Pcf_val (name, _, _) | Pcf_inherit (_, _, Some name) -> bind context Variable name
-   | Pcf_method (name, _, Cfk_virtual annotation) ->
-     bind context (Typing.role_of_method ~annotation session name) name
-   | Pcf_method (name, _, Cfk_concrete _) ->
-     let extent = field.pcf_loc in
-     let definition = Session.extent_of extent in
-     bind context ~definition (Typing.role_of_method ~extent session name) name
-   | _ -> ());
-  base.class_field iterator field
+let classify context (iterator : Ast_iterator.iterator) declaration =
+  declare context Type declaration.ptype_name;
+  Syntax.Recorder.enclose context.recorder (fun () ->
+    base.type_declaration iterator declaration)
 ;;
 
-let class_type_field context (iterator : Ast_iterator.iterator) field =
+let construct context (iterator : Ast_iterator.iterator) declaration =
+  declare context Constructor declaration.pcd_name;
+  base.constructor_declaration iterator declaration
+;;
+
+let extend context (iterator : Ast_iterator.iterator) constructor =
+  declare context Constructor constructor.pext_name;
+  base.extension_constructor iterator constructor
+;;
+
+let furnish context (iterator : Ast_iterator.iterator) field =
+  let descend () = base.class_field iterator field in
+  let role_of_method = Typing.role_of_method ~extent:field.pcf_loc context.session in
+  match field.pcf_desc with
+  | Pcf_val (name, _, _) | Pcf_inherit (_, _, Some name) ->
+    introduce context (binding_of context Variable name) ~body:descend
+  | Pcf_method (name, _, Cfk_virtual annotation) ->
+    introduce
+      context
+      (binding_of context (Typing.role_of_method ~annotation context.session name) name)
+      ~body:descend
+  | Pcf_method (name, _, Cfk_concrete _) ->
+    let definition = Session.extent_of field.pcf_loc in
+    introduce
+      context
+      (binding_of context ~definition (role_of_method name) name)
+      ~body:descend
+  | _ -> descend ()
+;;
+
+let outline context (iterator : Ast_iterator.iterator) field =
   match field.pctf_desc with
-  | Pctf_val (name, _, _, _) -> bind context Variable name
+  | Pctf_val (name, _, _, _) -> declare context Variable name
   | Pctf_method (name, _, _, annotation) ->
     let extent = field.pctf_loc in
-    bind context (Typing.role_of_method ~annotation ~extent context.session name) name
+    declare context (Typing.role_of_method ~annotation ~extent context.session name) name
   | _ -> base.class_type_field iterator field
+;;
+
+(* An inline test reads as [let%expect_test "description" = body], or with [test] or
+   [test_unit] in place of [expect_test]. *)
+let test_of context item =
+  match item.pstr_desc with
+  | Pstr_extension
+      ( ( { txt = ("expect_test" | "test" | "test_unit") as kind; _ }
+        , PStr [ { pstr_desc = Pstr_value (_, [ definition ]); _ } ] )
+      , _ ) ->
+    let description =
+      match definition.pvb_pat.ppat_desc with
+      | Ppat_constant { pconst_desc = Pconst_string (description, _, _); _ } ->
+        description
+      | _ -> kind
+    in
+    let offset = item.pstr_loc.loc_start.pos_cnum in
+    let extent = Session.extent_of item.pstr_loc in
+    Some
+      ( Binding.of_test context.source ~offset ~description ~definition:extent
+      , definition.pvb_expr )
+  | _ -> None
+;;
+
+let inspect context (iterator : Ast_iterator.iterator) item =
+  match test_of context item with
+  | Some (test, body) ->
+    introduce context (Some test) ~body:(fun () -> iterator.expr iterator body)
+  | None -> base.structure_item iterator item
+;;
+
+let decision_of context expression =
+  let placement : Decision.Placement.t =
+    if Set.mem context.late_guards (Session.extent_of expression.pexp_loc)
+    then Late
+    else Settled
+  in
+  let site =
+    Source.site_at context.source ~offset:expression.pexp_loc.loc_start.pos_cnum
+  in
+  let decision_of_form keyword form = { Decision.site; keyword; form; placement } in
+  match expression.pexp_desc with
+  | Pexp_ifthenelse _ -> Some (decision_of_form "if" If)
+  | Pexp_match (_, cases) ->
+    Some (decision_of_form "match" (Branching.form_of_cases cases))
+  | Pexp_function (_, _, Pfunction_cases (cases, _, _)) ->
+    Some (decision_of_form "function" (Branching.form_of_cases cases))
+  | _ -> None
 ;;
 
 (* A chain of [let]s declares its names in one scope, so that each declaration meets its
    siblings, even those declared after it. *)
-let rec descend (iterator : Ast_iterator.iterator) expression =
+let rec descend context (iterator : Ast_iterator.iterator) expression =
   match expression.pexp_desc with
   | Pexp_let (_, _, definitions, body) ->
     List.iter definitions ~f:(iterator.value_binding iterator);
-    descend iterator body
+    descend context iterator body
   | Pexp_letop { let_ = first; ands = rest; body } ->
     List.iter (first :: rest) ~f:(fun operation ->
       iterator.pat iterator operation.pbop_pat;
       iterator.expr iterator operation.pbop_exp);
-    descend iterator body
+    descend context iterator body
   | Pexp_extension (_, PStr [ { pstr_desc = Pstr_eval (body, _); _ } ]) ->
-    descend iterator body
-  | _ -> base.expr iterator expression
+    descend context iterator body
+  | _ ->
+    Option.iter
+      (decision_of context expression)
+      ~f:(Syntax.Recorder.decide context.recorder);
+    base.expr iterator expression
 ;;
 
-let payload (iterator : Ast_iterator.iterator) = function
+let unwrap (iterator : Ast_iterator.iterator) = function
   | PStr items -> base.structure iterator items
-  | other -> base.payload iterator other
+  | payload -> base.payload iterator payload
 ;;
 
 let with_bindings context (iterator : Ast_iterator.iterator) : Ast_iterator.iterator =
   { iterator with
     attribute = (fun _ _ -> ())
-  ; pat = pattern ~binder:(bind context Variable)
-  ; value_binding = value_binding context
-  ; value_description = value_description context
-  ; label_declaration = label_declaration context
-  ; class_field = class_field context
-  ; class_type_field = class_type_field context
-  ; payload
+  ; pat = pattern ~binder:(declare context Variable)
+  ; value_binding = define context
+  ; value_description = specify context
+  ; label_declaration = label context
+  ; type_declaration = classify context
+  ; constructor_declaration = construct context
+  ; extension_constructor = extend context
+  ; class_field = furnish context
+  ; class_type_field = outline context
+  ; structure_item = inspect context
+  ; payload = unwrap
   }
 ;;
 
@@ -124,11 +235,10 @@ let with_scopes context (iterator : Ast_iterator.iterator) : Ast_iterator.iterat
   { iterator with
     structure = enclose base.structure
   ; signature = enclose base.signature
-  ; type_declaration = enclose base.type_declaration
   ; class_structure = enclose base.class_structure
   ; class_signature = enclose base.class_signature
   ; case = enclose base.case
-  ; expr = enclose descend
+  ; expr = enclose (descend context)
   }
 ;;
 
@@ -144,7 +254,10 @@ let read ~path text =
   let open Or_error.Let_syntax in
   let%bind session = Session.create ~path text in
   let source = Source.create ~path ~comments:(Session.comments_of session) text in
-  let program = Syntax.record (fun recorder -> traverse { source; session; recorder }) in
+  let late_guards = Branching.late_guards_in (Session.parsetree_of session) in
+  let program =
+    Syntax.record (fun recorder -> traverse { source; session; late_guards; recorder })
+  in
   let%map () = Session.verify session in
   program
 ;;

@@ -3,6 +3,7 @@ open Ocaml_parsing
 open Parsetree
 module Codomain = Binding.Codomain
 module Role = Binding.Role
+module Shape = Session.Shape
 
 let rec is_arrow annotation =
   match annotation.ptyp_desc with
@@ -49,70 +50,89 @@ let codomain_of annotation =
   | _ -> Other (Format.asprintf "%a" Pprintast.core_type result)
 ;;
 
-let function_of annotation =
-  Role.Function
-    (lazy (Option.value_map annotation ~default:Codomain.Unknown ~f:codomain_of))
+let shape_of_annotation annotation =
+  let codomain = lazy (codomain_of annotation) in
+  if is_arrow annotation then Shape.Function codomain else Value codomain
 ;;
 
-let role_of_annotation annotation =
-  match is_arrow annotation with
-  | true -> function_of (Some annotation)
-  | false -> Role.Variable
+let unknown = Lazy.from_val Codomain.Unknown
+
+let codomain_of_return = function
+  | Pconstraint annotation | Pcoerce (_, annotation) -> lazy (codomain_of annotation)
 ;;
 
-let return_annotation_of = function
-  | Pconstraint annotation | Pcoerce (_, annotation) -> annotation
-;;
-
-let rec role_of_expression expression =
+let rec shape_of_expression expression =
   match expression.pexp_desc with
   | Pexp_function (_, signature, _) ->
-    function_of (Option.map signature.ret_type_constraint ~f:return_annotation_of)
+    let returned = Option.map signature.ret_type_constraint ~f:codomain_of_return in
+    Shape.Function (Option.value returned ~default:unknown)
   | Pexp_constraint (_, Some annotation, _) | Pexp_coerce (_, _, annotation) ->
-    role_of_annotation annotation
+    shape_of_annotation annotation
   | Pexp_constraint (body, None, _)
   | Pexp_newtype (_, _, body)
   | Pexp_let (_, _, _, body)
   | Pexp_letop { body; _ }
   | Pexp_open (_, body)
-  | Pexp_sequence (_, body) -> role_of_expression body
-  | _ -> Role.Variable
+  | Pexp_sequence (_, body) -> shape_of_expression body
+  | _ -> Value unknown
 ;;
 
-let merge ~inferred ~written =
-  match inferred, written with
-  | Some (Role.Function inferred), Role.Function written ->
-    Role.Function
-      (lazy
-        (match force inferred with
-         | Codomain.Unknown -> force written
-         | codomain -> codomain))
-  | Some (Function _ as role), Variable -> role
-  | Some Variable, _ | None, _ -> written
+let prefer inference annotation =
+  lazy
+    (match force inference with
+     | Codomain.Unknown -> force annotation
+     | codomain -> codomain)
 ;;
 
-let role_at session ?extent written (name : string Location.loc) =
-  let inferred =
+let merge ~inference ~annotation =
+  match inference, annotation with
+  | Some (Shape.Function inferred), Shape.Function written ->
+    Shape.Function (prefer inferred written)
+  | Some (Value inferred), Value written -> Value (prefer inferred written)
+  | Some (Function _ as shape), Value _ -> shape
+  | Some (Value _), (Function _ as shape) | None, shape -> shape
+;;
+
+let shape_at session ?extent annotation (name : string Location.loc) =
+  let inference =
     List.find_map (name.loc :: Option.to_list extent) ~f:(fun location ->
-      Session.role_at session (Session.extent_of location))
+      Session.shape_at session (Session.extent_of location))
   in
-  merge ~inferred ~written
+  merge ~inference ~annotation
 ;;
 
-let written_role_of_definition binding =
+let role_of_value = function
+  | Shape.Value _ -> Role.Variable
+  | Function codomain -> Function codomain
+;;
+
+let written_shape_of_definition binding =
   match binding.pvb_constraint, binding.pvb_pat.ppat_desc with
   | Some (Pvc_constraint { typ = annotation; _ }), _
   | Some (Pvc_coercion { coercion = annotation; _ }), _
-  | None, Ppat_constraint (_, Some annotation, _) -> role_of_annotation annotation
-  | None, _ -> role_of_expression binding.pvb_expr
+  | None, Ppat_constraint (_, Some annotation, _) -> shape_of_annotation annotation
+  | None, _ -> shape_of_expression binding.pvb_expr
 ;;
 
-let role_of_definition session binding =
-  role_at session ~extent:binding.pvb_pat.ppat_loc (written_role_of_definition binding)
+let role_of_definition session binding name =
+  let annotation = written_shape_of_definition binding in
+  role_of_value (shape_at session ~extent:binding.pvb_pat.ppat_loc annotation name)
 ;;
 
-let role_of_type session annotation = role_at session (role_of_annotation annotation)
+let role_of_description session annotation name =
+  role_of_value (shape_at session (shape_of_annotation annotation) name)
+;;
 
-let role_of_method ?annotation ?extent session =
-  role_at session ?extent (function_of annotation)
+let role_of_label session annotation name =
+  match shape_at session (shape_of_annotation annotation) name with
+  | Value codomain -> Role.Field codomain
+  | Function codomain -> Function codomain
+;;
+
+let role_of_method ?annotation ?extent session name =
+  let written =
+    Option.value_map annotation ~default:(Shape.Function unknown) ~f:shape_of_annotation
+  in
+  match shape_at session ?extent written name with
+  | Value codomain | Function codomain -> Role.Function codomain
 ;;

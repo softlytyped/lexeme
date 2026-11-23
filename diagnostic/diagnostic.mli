@@ -1,4 +1,4 @@
-(** A finding about one binding, and how it reads. *)
+(** A finding about something a program writes, and how it reads. *)
 
 open! Core
 
@@ -11,15 +11,6 @@ module Severity : sig
   [@@deriving equal]
 end
 
-module Limit : sig
-  (** The bounds on a function's lines of code, past which it earns a note, a warning and
-      an error. *)
-  type t =
-    | Soft
-    | Hard
-    | Reject
-end
-
 module Rule : sig
   module Name : sig
     (** The phrase that a name should be, and is not. *)
@@ -27,8 +18,11 @@ module Rule : sig
       | Single_letter
       | Variable (** a noun phrase *)
       | Function (** a verb phrase, a prepositional name or a predicate *)
-      | Predicate (** a predicate, for a function that gives a Boolean *)
+      | Predicate (** a predicate, for a function or field that gives a Boolean *)
       | Command (** a verb phrase, for a function that gives nothing *)
+      | Field (** a noun phrase *)
+      | Type (** a noun phrase *)
+      | Constructor (** a noun phrase or an adjective phrase *)
   end
 
   module Answer : sig
@@ -40,14 +34,25 @@ module Rule : sig
       | Unknown
   end
 
+  module Branch : sig
+    (** How a function body branches, when that could read better. *)
+    type t =
+      | Boolean_match (** a match on one Boolean, which a variant might name *)
+      | Boolean_tuple of int (** a match on several Booleans at once *)
+      | Lone_boolean_match (** a function body's one Boolean decision, as a match *)
+      | Several_ifs of Source.Position.t list (** a function body's if-else expressions *)
+      | Late_guard (** a guard after work that it does not use *)
+  end
+
   type t =
     | Name of Name.t
     | Answer of Answer.t
+    | Branch of Branch.t
     | Plural_lift of Binding.t (** the singular function that the plural may lift *)
     | Function_length of
         { lines : int
-        ; limit : Limit.t
         ; bound : int
+        ; severity : Severity.t
         }
 end
 
@@ -60,6 +65,7 @@ type t = private
 
 val create : site:Source.Site.t -> subject:string -> Rule.t -> t
 val of_binding : Binding.t -> Rule.t -> t
+val of_decision : Decision.t -> Rule.t -> t
 val severity_of : t -> Severity.t
 
 (** Returns the diagnostic as [path:line:column: severity[code] subject: message]. *)

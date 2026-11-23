@@ -3,13 +3,37 @@ open Merlin_kernel
 open Ocaml_typing
 module Codomain = Binding.Codomain
 module Node = Merlin_specific.Browse_raw
-module Role = Binding.Role
+
+(* A type is a value's, or a function's with its final result, beneath any quantifier. *)
+module Shape = struct
+  type 'codomain t =
+    | Value of 'codomain
+    | Function of 'codomain
+
+  let result_of = function
+    | Value result | Function result -> result
+  ;;
+
+  let map shape ~f:transformation =
+    match shape with
+    | Value result -> Value (transformation result)
+    | Function result -> Function (transformation result)
+  ;;
+
+  let rec of_type environment description =
+    let description = Ctype.expand_head environment description in
+    match Types.get_desc description with
+    | Tpoly (body, _) -> of_type environment body
+    | Tarrow (_, _, body, _) -> Function (result_of (of_type environment body))
+    | _ -> Value description
+  ;;
+end
 
 type t =
   { pipeline : Mpipeline.t
   ; parsetree : Mreader.parsetree
   ; comments : Source.Comment.t list
-  ; roles : Role.t Source.Extent.Map.t Or_error.t Lazy.t
+  ; shapes : Codomain.t Lazy.t Shape.t Source.Extent.Map.t Or_error.t Lazy.t
   }
 
 let extent_of (location : Ocaml_parsing.Location.t) =
@@ -59,56 +83,26 @@ let codomain_of environment description ~errors =
      | false -> Other (spelling_of environment description))
 ;;
 
-(* A type is a value's, or a function's with its final result, beneath any quantifier. *)
-module Shape = struct
-  type t =
-    | Value of Types.type_expr
-    | Function of Types.type_expr
-
-  let result_of = function
-    | Value result | Function result -> result
-  ;;
-
-  let rec of_type environment description =
-    let description = Ctype.expand_head environment description in
-    match Types.get_desc description with
-    | Tpoly (body, _) -> of_type environment body
-    | Tarrow (_, _, body, _) -> Function (result_of (of_type environment body))
-    | _ -> Value description
-  ;;
-end
-
-type declaration =
-  | Value
-  | Method
-
 let declaration_of = function
-  | Node.Pattern pattern -> Some (Value, pattern.pat_loc, pattern.pat_type)
-  | Node.Value_description value ->
-    Some (Value, value.val_name.loc, value.val_desc.ctyp_type)
-  | Node.Label_declaration label ->
-    Some (Value, label.ld_name.loc, label.ld_type.ctyp_type)
+  | Node.Pattern pattern -> Some (pattern.pat_loc, pattern.pat_type)
+  | Node.Value_description value -> Some (value.val_name.loc, value.val_desc.ctyp_type)
+  | Node.Label_declaration label -> Some (label.ld_name.loc, label.ld_type.ctyp_type)
   | Node.Class_field { cf_desc = Tcf_method (name, _, Tcfk_concrete (_, body)); _ } ->
-    Some (Method, name.loc, body.exp_type)
+    Some (name.loc, body.exp_type)
   | Node.Class_field { cf_desc = Tcf_method (name, _, Tcfk_virtual annotation); _ } ->
-    Some (Method, name.loc, annotation.ctyp_type)
-  | Node.Class_type_field { ctf_desc = Tctf_method (_, _, _, annotation); ctf_loc; _ } ->
-    Some (Method, ctf_loc, annotation.ctyp_type)
+    Some (name.loc, annotation.ctyp_type)
+  | Node.Class_type_field
+      { ctf_desc = Tctf_method (_, _, _, annotation); ctf_loc = site; _ } ->
+    Some (site, annotation.ctyp_type)
   | _ -> None
 ;;
 
 (* The caller may judge a binding after another file has been read, so the codomain
    restores the compiler environment that owns its types. *)
-let role_of pipeline environment ~errors (declaration, description) =
-  let shape = Shape.of_type environment description in
-  let codomain =
+let shape_of pipeline environment description ~errors =
+  Shape.map (Shape.of_type environment description) ~f:(fun result ->
     lazy
-      (Mpipeline.with_pipeline pipeline (fun () ->
-         codomain_of environment (Shape.result_of shape) ~errors))
-  in
-  match declaration, shape with
-  | Value, Value _ -> Role.Variable
-  | Method, _ | Value, Function _ -> Function codomain
+      (Mpipeline.with_pipeline pipeline (fun () -> codomain_of environment result ~errors)))
 ;;
 
 let root_of typing =
@@ -120,22 +114,22 @@ let root_of typing =
 (* Where the source does not type, we leave an undetermined type to the written syntax. *)
 let index_of pipeline typing =
   let errors = lazy (not (List.is_empty (Mtyper.get_errors typing))) in
-  let rec visit environment node roles =
+  let rec visit environment node shapes =
     let environment = Node.node_update_env environment node in
-    let add_role (declaration, location, description) =
-      match is_undetermined environment description ~errors with
-      | true -> roles
-      | false ->
-        let role = role_of pipeline environment ~errors (declaration, description) in
-        Map.set roles ~key:(extent_of location) ~data:role
+    let add_shape (location, description) =
+      if is_undetermined environment description ~errors
+      then shapes
+      else (
+        let shape = shape_of pipeline environment description ~errors in
+        Map.set shapes ~key:(extent_of location) ~data:shape)
     in
-    let roles = Option.value_map (declaration_of node) ~default:roles ~f:add_role in
-    Node.fold_node visit environment node roles
+    let shapes = Option.value_map (declaration_of node) ~default:shapes ~f:add_shape in
+    Node.fold_node visit environment node shapes
   in
   visit (Mtyper.initial_env typing) (root_of typing) Source.Extent.Map.empty
 ;;
 
-let roles_of pipeline ~path =
+let shapes_of pipeline ~path =
   Or_error.try_with (fun () ->
     Mpipeline.with_pipeline pipeline (fun () ->
       index_of pipeline (Mpipeline.typer_result pipeline)))
@@ -172,7 +166,7 @@ let session_of pipeline ~path =
   { pipeline
   ; parsetree = Mpipeline.reader_parsetree pipeline
   ; comments = List.map (Mpipeline.reader_comments pipeline) ~f:comment_of
-  ; roles = lazy (roles_of pipeline ~path)
+  ; shapes = lazy (shapes_of pipeline ~path)
   }
 ;;
 
@@ -185,13 +179,11 @@ let create ~path text =
 let parsetree_of session = session.parsetree
 let comments_of session = session.comments
 
-let role_at session extent =
-  let%bind.Option roles = Result.ok (force session.roles) in
-  Map.find roles extent
+let shape_at session extent =
+  let%bind.Option shapes = Result.ok (force session.shapes) in
+  Map.find shapes extent
 ;;
 
 let verify session =
-  match Lazy.is_val session.roles with
-  | false -> Ok ()
-  | true -> Or_error.ignore_m (force session.roles)
+  if Lazy.is_val session.shapes then Or_error.ignore_m (force session.shapes) else Ok ()
 ;;

@@ -4,7 +4,8 @@
 open! Core
 
 module Codomain : sig
-  (** What a function gives once it has all of its arguments. *)
+  (** What a function gives once it has all of its arguments. A field's codomain is that
+      of its projection, the type of what it holds. *)
   type t =
     | Boolean
     | Optional_boolean
@@ -18,6 +19,10 @@ module Role : sig
   type t =
     | Variable
     | Function of Codomain.t Lazy.t
+    | Field of Codomain.t Lazy.t (** a record field that holds no function *)
+    | Type
+    | Constructor
+    | Test (** an inline test, named by its description *)
 end
 
 type t = private
@@ -25,7 +30,7 @@ type t = private
   ; role : Role.t
   ; site : Source.Site.t
   ; comment : string option (** a comment that follows the name on its line *)
-  ; lines : int option (** the lines of code in a function's definition *)
+  ; lines : int option (** the lines of code in the definition of a function or test *)
   }
 
 (** Returns the binding of [name] at [offset], and counts the lines of code in its
@@ -38,3 +43,11 @@ val find
   -> name:string
   -> Role.t
   -> t option
+
+(** Returns the binding of an inline test whose description opens at [offset]. *)
+val of_test
+  :  Source.t
+  -> offset:int
+  -> description:string
+  -> definition:Source.Extent.t
+  -> t

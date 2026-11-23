@@ -176,7 +176,17 @@ module Name = struct
     { spelling; words; predicate = predicate_of words }
   ;;
 
-  let has_auxiliary name = Option.is_some name.predicate
+  module Form = struct
+    type t =
+      | Question
+      | Statement
+  end
+
+  let form_of name =
+    match name.predicate with
+    | Some _ -> Form.Question
+    | None -> Statement
+  ;;
 
   let is_letter name =
     let stem = stem_of name.spelling in
@@ -201,9 +211,10 @@ end
 module Reading = struct
   type t =
     | Noun_phrase
+    | Adjective_phrase
     | Verb_phrase
     | Predicate
-    | Nominal of string list
+    | Nominal
   [@@deriving equal, sexp_of]
 end
 
@@ -225,10 +236,11 @@ let inflect plural singular =
   | false -> singular
 ;;
 
-let singulars_of grammar name ~subject ~complement =
-  match List.rev subject with
-  | [] -> []
-  | head :: modifiers ->
+let singulars_of grammar (name : Name.t) =
+  let subject, complement = List.split_while name.words ~f:(Fn.non is_preposition) in
+  match List.rev subject, complement with
+  | [], _ | _, [] -> []
+  | head :: modifiers, _ :: _ ->
     let noun = String.lowercase head in
     List.filter
       (Lexicon.singulars_of grammar.lexicon noun)
@@ -241,6 +253,12 @@ let noun_reading grammar (name : Name.t) =
   Option.some_if (Phrase.does_match grammar.nominal name.words) Reading.Noun_phrase
 ;;
 
+let adjective_reading grammar (name : Name.t) =
+  Option.some_if
+    (Phrase.does_match grammar.adjective_phrase name.words)
+    Reading.Adjective_phrase
+;;
+
 let verb_reading grammar (name : Name.t) =
   Option.some_if
     ((not (List.exists name.words ~f:is_preposition))
@@ -248,17 +266,16 @@ let verb_reading grammar (name : Name.t) =
     Reading.Verb_phrase
 ;;
 
-let nominal_reading grammar (name : Name.t) =
+let is_nominal grammar (name : Name.t) =
   let is_object words = List.is_empty words || Phrase.does_match grammar.nominal words in
   match List.split_while name.words ~f:(Fn.non is_preposition) with
-  | _, [] -> None
-  | [], _ :: rest ->
-    Option.some_if (Phrase.does_match grammar.nominal rest) (Reading.Nominal [])
-  | subject, (_ :: rest as complement) ->
-    let%map.Option () =
-      Option.some_if (Phrase.does_match grammar.noun_phrase subject && is_object rest) ()
-    in
-    Reading.Nominal (singulars_of grammar name ~subject ~complement)
+  | _, [] -> false
+  | [], _ :: rest -> Phrase.does_match grammar.nominal rest
+  | subject, _ :: rest -> Phrase.does_match grammar.noun_phrase subject && is_object rest
+;;
+
+let nominal_reading grammar name =
+  Option.some_if (is_nominal grammar name) Reading.Nominal
 ;;
 
 let readings_of grammar (name : Name.t) =
@@ -268,6 +285,7 @@ let readings_of grammar (name : Name.t) =
   | None ->
     List.filter_opt
       [ noun_reading grammar name
+      ; adjective_reading grammar name
       ; verb_reading grammar name
       ; nominal_reading grammar name
       ]
