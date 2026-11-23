@@ -22,14 +22,14 @@ module Rule : sig
       | Command (** a verb phrase, for a function that gives nothing *)
       | Field (** a noun phrase *)
       | Type (** a noun phrase *)
-      | Constructor (** a noun phrase or an adjective phrase *)
+      | Constructor (** a noun phrase, since a constructor names data *)
   end
 
   module Answer : sig
     (** What a predicate gives, when that is not a plain Boolean. *)
     type t =
-      | Optional
-      | Fallible
+      | Optional_boolean
+      | Fallible_boolean
       | Wrong of string
       | Unknown
   end

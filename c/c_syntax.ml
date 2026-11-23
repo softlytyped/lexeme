@@ -136,7 +136,7 @@ let codomain_of_result result =
   match String.split result ~on:' ' |> List.filter ~f:(Fn.non is_qualifier) with
   | [ ("bool" | "_Bool") ] -> Codomain.Boolean
   | [ "void" ] -> Unit "void"
-  | _ -> Other result
+  | _ -> Other_type result
 ;;
 
 (* A function's type spells its result and then its parameters, as in [int (char * )]. A
@@ -149,7 +149,7 @@ let codomain_of aliases declaration =
      | Some (result, parameters) when not (String.is_prefix parameters ~prefix:"*") ->
        codomain_of_result
          (expand aliases ~expansions:String.Set.empty (String.strip result))
-     | Some _ | None -> Other spelling)
+     | Some _ | None -> Other_type spelling)
 ;;
 
 let binding_of source node ?definition role =

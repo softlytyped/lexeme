@@ -90,7 +90,7 @@ definition by its length. A Boolean field is a predicate, and main keeps its nam
   > EOF
   $ lexeme shapes.c
   shapes.c:2:42: error[predicate-name] ready: expected a predicate, such as is_empty or has_entries, for a Boolean
-  shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase or an adjective phrase
+  shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase
   shapes.c:5:5: note[function-length] count_of: 12 source lines of code, more than 10
   [1]
 

@@ -30,8 +30,7 @@ end
 module Reading : sig
   type t =
     | Noun_phrase (** [matrix], [register_bits], [start_of_line] *)
-    | Adjective_phrase (** [accepted], [strictly_positive] *)
-    | Verb_phrase (** [apply], [fully_contract], [test_and_set] *)
+    | Verb_phrase (** [apply], [fully_contract], [test_and_set], [drain_into] *)
     | Predicate (** [is_zero], [has_entries], [does_accept] *)
     | Nominal (** [entries_of], [entry_at_index], [of_int]: a name for what is given *)
   [@@deriving equal, sexp_of]

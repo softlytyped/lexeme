@@ -49,7 +49,7 @@ let codomain_of annotation =
   | "Or_error.t", [ value ] when is_boolean value -> Fallible_boolean
   | ("result" | "Result.t"), [ value; error ] when is_fallible ~value ~error ->
     Fallible_boolean
-  | _ -> Other (Format.asprintf "%a" Pprintast.core_type result)
+  | _ -> Other_type (Format.asprintf "%a" Pprintast.core_type result)
 ;;
 
 let shape_of_annotation annotation =

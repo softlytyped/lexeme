@@ -40,25 +40,24 @@ module Rule = struct
     let message_of = function
       | Single_letter ->
         "use a longer name or add a lexeme: allow-letter comment with a reason"
-      | Variable | Field | Type -> "expected a noun phrase"
+      | Variable | Field | Type | Constructor -> "expected a noun phrase"
       | Function ->
         "expected a verb phrase, a predicate or a noun phrase with a preposition"
       | Predicate ->
         "expected a predicate, such as is_empty or has_entries, for a Boolean"
       | Command -> "expected a verb phrase for a command (command-query separation)"
-      | Constructor -> "expected a noun phrase or an adjective phrase"
     ;;
   end
 
   module Answer = struct
     type t =
-      | Optional
-      | Fallible
+      | Optional_boolean
+      | Fallible_boolean
       | Wrong of string
       | Unknown
 
     let severity_of = function
-      | Optional | Fallible -> Severity.Note
+      | Optional_boolean | Fallible_boolean -> Severity.Note
       | Wrong _ | Unknown -> Error
     ;;
 
@@ -77,8 +76,8 @@ module Rule = struct
     ;;
 
     let message_of = function
-      | Optional -> question_of "Some false" "None"
-      | Fallible -> question_of "Ok false" "Error"
+      | Optional_boolean -> question_of "Some false" "None"
+      | Fallible_boolean -> question_of "Ok false" "Error"
       | Wrong spelling -> "expected a Boolean result, found " ^ spelling
       | Unknown -> "could not infer the result type: add a type annotation"
     ;;

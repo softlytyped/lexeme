@@ -11,7 +11,7 @@ module Codomain : sig
     | Optional_boolean
     | Fallible_boolean
     | Unit of string
-    | Other of string
+    | Other_type of string
     | Unknown
 end
 

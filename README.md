@@ -48,17 +48,18 @@ and superlatives of its adjectives. The types come from the compiler.
 | What the name binds | Expected | Examples |
 | --- | --- | --- |
 | A value | a noun phrase | `matrix`, `register_bits`, `start_of_line` |
-| A function | a verb phrase | `apply`, `fully_contract`, `test_and_set` |
+| A function | a verb phrase | `apply`, `fully_contract`, `test_and_set`, `drain_into` |
 | | a noun phrase with a preposition | `entries_of`, `entry_at_index`, `of_int` |
 | | a predicate | `is_empty`, `has_entries`, `does_accept` |
 | A function that returns a Boolean | a predicate | `is_sorted` |
 | A function that returns unit or void | a verb phrase | `print`, `flush` |
 | A record field or a struct member | a noun phrase, or a predicate for a Boolean | `count`, `is_open` |
 | A type | a noun phrase | `matrix`, `t` |
-| A constructor | a noun phrase or an adjective phrase | `Warning`, `Accepted` |
+| A constructor | a noun phrase | `Warning`, `Acceptance` |
 
 A function that returns unit is a command, in the sense of command-query separation, so a
-verb names it. A parameter that holds a function is named as a function, and a type alias
+verb names it. A verb phrase may end in a prepositional phrase. A constructor names data,
+so a noun phrase names it. A parameter that holds a function is named as a function, and a type alias
 of `bool` is a Boolean. A predicate that returns `bool option` or `bool Or_error.t` earns a
 note, which asks whether `Some false` differs from `None`, or `Ok false` from `Error`.
 

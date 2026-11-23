@@ -80,7 +80,7 @@ let codomain_of environment description ~errors =
   | None ->
     if is_undetermined environment description ~errors
     then Unknown
-    else Other (spelling_of environment description)
+    else Other_type (spelling_of environment description)
 ;;
 
 let method_of = function

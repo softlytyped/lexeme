@@ -14,14 +14,16 @@ end
 
 module Placement : sig
   type t =
-    | Late (** a guard clause after work that neither its condition nor a branch uses *)
-    | Settled
+    | Late_position
+    (** a guard clause after work that neither its condition nor a branch uses *)
+    | Proper_position
 end
 
 module Nesting : sig
   type t =
-    | Nested (** within a branch of a Boolean condition of the same function body *)
-    | Outermost
+    | Nested_position
+    (** within a branch of a Boolean condition of the same function body *)
+    | Outer_position
 end
 
 type t =

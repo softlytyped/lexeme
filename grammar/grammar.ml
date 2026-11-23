@@ -7,7 +7,7 @@ module Phrase = struct
     | Word of (string -> bool)
     | Sequence of t list
     | Choice of t list
-    | Many of t
+    | Repetition of t
 
   (* [is_complete position] answers whether the words from [position] on complete the
      match. *)
@@ -18,7 +18,7 @@ module Phrase = struct
       List.exists phrases ~f:(fun phrase ->
         does_accept phrase words position ~is_complete)
     | Sequence phrases -> does_accept_successively phrases words position ~is_complete
-    | Many phrase -> does_accept_repeatedly phrase words position ~is_complete
+    | Repetition phrase -> does_accept_repeatedly phrase words position ~is_complete
 
   and does_accept_once does_fit words position ~is_complete =
     position < Array.length words
@@ -49,7 +49,9 @@ module Phrase = struct
     does_accept phrase words 0 ~is_complete:(Int.equal (Array.length words))
   ;;
 
-  let chain phrase separator = Sequence [ phrase; Many (Sequence [ separator; phrase ]) ]
+  let chain phrase separator =
+    Sequence [ phrase; Repetition (Sequence [ separator; phrase ]) ]
+  ;;
 end
 
 let prepositions =
@@ -122,7 +124,7 @@ let word_of lexicon is_kind ~is_separator =
 
 let adjective_phrase_of lexicon =
   let adverbs =
-    Phrase.Many (word_of lexicon Lexicon.is_adverb ~is_separator:is_preposition)
+    Phrase.Repetition (word_of lexicon Lexicon.is_adverb ~is_separator:is_preposition)
   in
   Phrase.Sequence
     [ adverbs; word_of lexicon Lexicon.is_adjective ~is_separator:is_preposition ]
@@ -130,12 +132,12 @@ let adjective_phrase_of lexicon =
 
 let noun_phrase_of lexicon =
   let noun = word_of lexicon Lexicon.is_noun ~is_separator:is_preposition in
-  Phrase.Sequence [ Many (Choice [ noun; adjective_phrase_of lexicon ]); noun ]
+  Phrase.Sequence [ Repetition (Choice [ noun; adjective_phrase_of lexicon ]); noun ]
 ;;
 
 let verb_phrase_of lexicon =
   let adverbs =
-    Phrase.Many (word_of lexicon Lexicon.is_adverb ~is_separator:is_conjunction)
+    Phrase.Repetition (word_of lexicon Lexicon.is_adverb ~is_separator:is_conjunction)
   in
   let verb = word_of lexicon Lexicon.is_verb ~is_separator:is_conjunction in
   Phrase.chain (Sequence [ adverbs; verb; adverbs ]) (Word is_conjunction)
@@ -214,7 +216,6 @@ end
 module Reading = struct
   type t =
     | Noun_phrase
-    | Adjective_phrase
     | Verb_phrase
     | Predicate
     | Nominal
@@ -256,26 +257,28 @@ let singulars_of grammar (name : Name.t) =
 
 let is_noun_phrase grammar (name : Name.t) = Phrase.does_match grammar.nominal name.words
 
-let is_adjective_phrase grammar (name : Name.t) =
-  Phrase.does_match grammar.adjective_phrase name.words
+let is_object grammar words =
+  List.is_empty words || Phrase.does_match grammar.nominal words
 ;;
 
+(* A verb phrase may end in a prepositional phrase, as in [drain_into]. *)
 let is_verb_phrase grammar (name : Name.t) =
-  (not (List.exists name.words ~f:is_preposition))
-  && Phrase.does_match grammar.verb_phrase name.words
+  match List.split_while name.words ~f:(Fn.non is_preposition) with
+  | verbs, [] -> Phrase.does_match grammar.verb_phrase verbs
+  | verbs, _ :: rest ->
+    Phrase.does_match grammar.verb_phrase verbs && is_object grammar rest
 ;;
 
 let is_nominal grammar (name : Name.t) =
-  let is_object words = List.is_empty words || Phrase.does_match grammar.nominal words in
   match List.split_while name.words ~f:(Fn.non is_preposition) with
   | _, [] -> false
   | [], _ :: rest -> Phrase.does_match grammar.nominal rest
-  | subject, _ :: rest -> Phrase.does_match grammar.noun_phrase subject && is_object rest
+  | subject, _ :: rest ->
+    Phrase.does_match grammar.noun_phrase subject && is_object grammar rest
 ;;
 
 let statement_readings_of grammar name =
   [ is_noun_phrase, Reading.Noun_phrase
-  ; is_adjective_phrase, Adjective_phrase
   ; is_verb_phrase, Verb_phrase
   ; is_nominal, Nominal
   ]

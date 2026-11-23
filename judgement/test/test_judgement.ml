@@ -286,11 +286,14 @@ type x|};
     |}]
 ;;
 
-let%expect_test "a constructor is a noun phrase or an adjective phrase" =
+let%expect_test "a constructor names data with a noun phrase" =
   show
     ~path:"shapes.mli"
-    {|type verdict = Accepted | Rejected | Strictly_positive | Quickly | Late of int|};
-  [%expect {| 1:58 constructor-name Quickly |}]
+    {|type verdict = Acceptance | Rejection | Upper_bound of int | Accepted | Quickly|};
+  [%expect {|
+    1:62 constructor-name Accepted
+    1:73 constructor-name Quickly
+    |}]
 ;;
 
 (* A function of [lines] lines of code, with a blank line and a comment between each,
@@ -424,7 +427,7 @@ type record = { quickly : int }|};
   [%expect
     {|
     input.ml:1:6: error[type-name] quickly: expected a noun phrase
-    input.ml:1:16: error[constructor-name] Quickly: expected a noun phrase or an adjective phrase
+    input.ml:1:16: error[constructor-name] Quickly: expected a noun phrase
     input.ml:2:17: error[field-name] quickly: expected a noun phrase
     |}]
 ;;

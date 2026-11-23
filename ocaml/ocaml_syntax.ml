@@ -172,11 +172,11 @@ let inspect context (iterator : Ast_iterator.iterator) item =
 ;;
 
 let placement_of context extent : Decision.Placement.t =
-  if Set.mem context.late_guards extent then Late else Settled
+  if Set.mem context.late_guards extent then Late_position else Proper_position
 ;;
 
 let nesting_of context extent : Decision.Nesting.t =
-  if Set.mem context.nested_booleans extent then Nested else Outermost
+  if Set.mem context.nested_booleans extent then Nested_position else Outer_position
 ;;
 
 let branching_of expression =

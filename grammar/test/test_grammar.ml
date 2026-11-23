@@ -106,7 +106,7 @@ let%expect_test "adverbs modify an adjective, and prepositions join noun phrases
     {|
     (strictly_positive_integer (Noun_phrase) ())
     (exclusive_or (Noun_phrase) ())
-    (start_of_line (Noun_phrase Nominal) ())
+    (start_of_line (Noun_phrase Verb_phrase Nominal) ())
     |}]
 ;;
 

@@ -77,9 +77,9 @@ let expect readings phrases rule =
 let answer_rules_of codomain =
   match codomain with
   | Codomain.Boolean -> []
-  | Optional_boolean -> [ Rule.Answer Optional ]
-  | Fallible_boolean -> [ Answer Fallible ]
-  | Unit spelling | Other spelling -> [ Answer (Wrong spelling) ]
+  | Optional_boolean -> [ Rule.Answer Optional_boolean ]
+  | Fallible_boolean -> [ Answer Fallible_boolean ]
+  | Unit spelling | Other_type spelling -> [ Answer (Wrong spelling) ]
   | Unknown -> [ Answer Unknown ]
 ;;
 
@@ -89,14 +89,14 @@ let rules_of_function readings codomain =
   match codomain with
   | Codomain.Boolean -> [ Rule.Name Predicate ]
   | Unit _ -> expect readings [ Verb_phrase ] Command
-  | Optional_boolean | Fallible_boolean | Other _ | Unknown ->
+  | Optional_boolean | Fallible_boolean | Other_type _ | Unknown ->
     expect readings [ Verb_phrase; Nominal ] Function
 ;;
 
 let rules_of_field readings codomain =
   match codomain with
   | Codomain.Boolean -> [ Rule.Name Predicate ]
-  | Optional_boolean | Fallible_boolean | Unit _ | Other _ | Unknown ->
+  | Optional_boolean | Fallible_boolean | Unit _ | Other_type _ | Unknown ->
     expect readings [ Noun_phrase ] Field
 ;;
 
@@ -113,7 +113,7 @@ let phrase_rules_of (binding : Binding.t) name readings =
   | Function codomain -> typed_rules_of name readings codomain ~judge:rules_of_function
   | Field codomain -> typed_rules_of name readings codomain ~judge:rules_of_field
   | Type -> expect readings [ Noun_phrase ] Type
-  | Constructor -> expect readings [ Noun_phrase; Adjective_phrase ] Constructor
+  | Constructor -> expect readings [ Noun_phrase ] Constructor
   | Test -> []
 ;;
 
@@ -182,10 +182,10 @@ let form_rules_of = function
 
 let placement_rules_of (decision : Decision.t) =
   match decision.placement, decision.nesting with
-  | Late, Nested -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
-  | Late, Outermost -> [ Rule.Branch Late_guard ]
-  | Settled, Nested -> [ Rule.Branch Nested_boolean ]
-  | Settled, Outermost -> []
+  | Late_position, Nested_position -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
+  | Late_position, Outer_position -> [ Rule.Branch Late_guard ]
+  | Proper_position, Nested_position -> [ Rule.Branch Nested_boolean ]
+  | Proper_position, Outer_position -> []
 ;;
 
 let decide (decision : Decision.t) =

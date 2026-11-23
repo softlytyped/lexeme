@@ -11,14 +11,14 @@ end
 
 module Placement = struct
   type t =
-    | Late
-    | Settled
+    | Late_position
+    | Proper_position
 end
 
 module Nesting = struct
   type t =
-    | Nested
-    | Outermost
+    | Nested_position
+    | Outer_position
 end
 
 type t =

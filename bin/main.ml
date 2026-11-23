@@ -2,15 +2,15 @@ open! Core
 
 module Outcome = struct
   type t =
-    | Accepted
-    | Rejected
-    | Failed
+    | Acceptance
+    | Rejection
+    | Failure
 
   (* The exit statuses that the manual documents. *)
   let status_of = function
-    | Accepted -> 0
-    | Rejected -> 1
-    | Failed -> 2
+    | Acceptance -> 0
+    | Rejection -> 1
+    | Failure -> 2
   ;;
 end
 
@@ -85,7 +85,7 @@ let outcome_of diagnostics =
   let is_error diagnostic =
     Diagnostic.Severity.equal (Diagnostic.severity_of diagnostic) Error
   in
-  if List.exists diagnostics ~f:is_error then Outcome.Rejected else Accepted
+  if List.exists diagnostics ~f:is_error then Outcome.Rejection else Acceptance
 ;;
 
 let report results =
@@ -97,7 +97,7 @@ let report results =
   | [] -> outcome_of diagnostics
   | _ :: _ ->
     eprintf "%s\n%!" (Error.to_string_hum (Error.of_list failures));
-    Failed
+    Failure
 ;;
 
 let with_flags (configuration : Configuration.t) flags =
