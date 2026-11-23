@@ -155,3 +155,57 @@ let late_guards_in parsetree =
    | `Implementation items -> iterator.structure iterator items);
   Source.Extent.Set.of_list (Queue.to_list guards)
 ;;
+
+let is_boolean_form = function
+  | Decision.Form.Boolean_match -> true
+  | Tuple_match count -> count > 0
+  | If | Other_match -> false
+;;
+
+(* The Boolean decisions that enclose a traversal's expression within its function body,
+   and the Boolean matches that we have found within another. *)
+type nesting =
+  { mutable depth : int
+  ; nested : Source.Extent.t Queue.t
+  }
+
+let within nesting ~depth traversal =
+  let outer_depth = nesting.depth in
+  nesting.depth <- depth;
+  traversal ();
+  nesting.depth <- outer_depth
+;;
+
+let track_match nesting (self : Ast_iterator.iterator) expression scrutinee cases =
+  let form = form_of_cases cases in
+  if nesting.depth > 0 && Decision.Form.equal form Boolean_match
+  then Queue.enqueue nesting.nested (Session.extent_of expression.pexp_loc);
+  self.expr self scrutinee;
+  within nesting ~depth:(nesting.depth + Bool.to_int (is_boolean_form form)) (fun () ->
+    List.iter cases ~f:(self.case self))
+;;
+
+(* A function's body starts at no depth, or within its own match where that is on a
+   Boolean. *)
+let track nesting (self : Ast_iterator.iterator) expression =
+  match expression.pexp_desc with
+  | Pexp_ifthenelse (condition, consequent, alternative) ->
+    self.expr self condition;
+    within nesting ~depth:(nesting.depth + 1) (fun () ->
+      List.iter (consequent :: Option.to_list alternative) ~f:(self.expr self))
+  | Pexp_match (scrutinee, cases) -> track_match nesting self expression scrutinee cases
+  | Pexp_function (_, _, Pfunction_cases (cases, _, _)) ->
+    let depth = Bool.to_int (is_boolean_form (form_of_cases cases)) in
+    within nesting ~depth (fun () -> base.expr self expression)
+  | Pexp_function _ -> within nesting ~depth:0 (fun () -> base.expr self expression)
+  | _ -> base.expr self expression
+;;
+
+let nested_booleans_in parsetree =
+  let nesting = { depth = 0; nested = Queue.create () } in
+  let iterator = { base with expr = track nesting } in
+  (match parsetree with
+   | `Interface items -> iterator.signature iterator items
+   | `Implementation items -> iterator.structure iterator items);
+  Source.Extent.Set.of_list (Queue.to_list nesting.nested)
+;;

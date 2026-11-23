@@ -18,9 +18,16 @@ module Placement : sig
     | Settled
 end
 
+module Nesting : sig
+  type t =
+    | Nested (** within a branch of a Boolean decision of the same function body *)
+    | Outermost
+end
+
 type t =
   { site : Source.Site.t
   ; keyword : string (** such as [if] or [match], to name the decision *)
   ; form : Form.t
   ; placement : Placement.t
+  ; nesting : Nesting.t
   }

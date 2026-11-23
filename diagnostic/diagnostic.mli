@@ -42,6 +42,7 @@ module Rule : sig
       | Lone_boolean_match (** a function body's one Boolean decision, as a match *)
       | Several_ifs of Source.Position.t list (** a function body's if-else expressions *)
       | Late_guard (** a guard after work that it does not use *)
+      | Nested_boolean (** a match on one Boolean within another Boolean decision *)
   end
 
   type t =

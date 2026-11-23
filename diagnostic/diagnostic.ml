@@ -89,10 +89,11 @@ module Rule = struct
       | Lone_boolean_match
       | Several_ifs of Source.Position.t list
       | Late_guard
+      | Nested_boolean
 
     let severity_of = function
       | Boolean_match | Late_guard -> Severity.Note
-      | Lone_boolean_match | Several_ifs _ -> Warning
+      | Lone_boolean_match | Several_ifs _ | Nested_boolean -> Warning
       | Boolean_tuple _ -> Error
     ;;
 
@@ -102,6 +103,7 @@ module Rule = struct
       | Lone_boolean_match -> "lone-boolean-match"
       | Several_ifs _ -> "if-else"
       | Late_guard -> "late-guard"
+      | Nested_boolean -> "nested-boolean"
     ;;
 
     let lines_of positions =
@@ -122,6 +124,9 @@ module Rule = struct
           (lines_of positions)
       | Late_guard ->
         "this precondition uses none of the work before it: could it come first?"
+      | Nested_boolean ->
+        "a Boolean match within another Boolean decision: parse, don't validate, with a \
+         variant"
     ;;
   end
 

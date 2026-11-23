@@ -329,3 +329,18 @@ let%expect_test "an inline test has more room than a function" =
   [%expect
     {| input.ml:1:1: note[function-length] "example": 16 lines of code, more than 15 |}]
 ;;
+
+let%expect_test "a Boolean match within another Boolean decision asks for a variant" =
+  check
+    {|let classify first second =
+  match first with
+  | true -> (match second with true -> 1 | false -> 2)
+  | false -> 3
+let label flag items = if flag then (match items with [] -> 0 | _ -> 1) else 2|};
+  [%expect
+    {|
+    input.ml:2:3: note[boolean-match] match: could a variant name the cases of this Boolean?
+    input.ml:3:13: note[boolean-match] match: could a variant name the cases of this Boolean?
+    input.ml:3:13: warning[nested-boolean] match: a Boolean match within another Boolean decision: parse, don't validate, with a variant
+    |}]
+;;

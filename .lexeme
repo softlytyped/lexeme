@@ -1,1 +1,2 @@
-((vocabulary ((nouns (codomain diagnostic iterator)))))
+((vocabulary
+  ((nouns (boolean codomain consequent diagnostic iterator keyword scrutinee sexp tuple)))))

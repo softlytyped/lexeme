@@ -8,6 +8,7 @@ type context =
   { source : Source.t
   ; session : Session.t
   ; late_guards : Source.Extent.Set.t
+  ; nested_booleans : Source.Extent.Set.t
   ; recorder : Syntax.Recorder.t
   }
 
@@ -167,15 +168,17 @@ let inspect context (iterator : Ast_iterator.iterator) item =
 ;;
 
 let decision_of context expression =
+  let extent = Session.extent_of expression.pexp_loc in
   let placement : Decision.Placement.t =
-    if Set.mem context.late_guards (Session.extent_of expression.pexp_loc)
-    then Late
-    else Settled
+    if Set.mem context.late_guards extent then Late else Settled
+  in
+  let nesting : Decision.Nesting.t =
+    if Set.mem context.nested_booleans extent then Nested else Outermost
   in
   let site =
     Source.site_at context.source ~offset:expression.pexp_loc.loc_start.pos_cnum
   in
-  let decision_of_form keyword form = { Decision.site; keyword; form; placement } in
+  let decision_of_form keyword form = { Decision.site; keyword; form; placement; nesting } in
   match expression.pexp_desc with
   | Pexp_ifthenelse _ -> Some (decision_of_form "if" If)
   | Pexp_match (_, cases) ->
@@ -254,9 +257,12 @@ let read ~path text =
   let open Or_error.Let_syntax in
   let%bind session = Session.create ~path text in
   let source = Source.create ~path ~comments:(Session.comments_of session) text in
-  let late_guards = Branching.late_guards_in (Session.parsetree_of session) in
+  let syntax_tree = Session.parsetree_of session in
+  let late_guards = Branching.late_guards_in syntax_tree in
+  let nested_booleans = Branching.nested_booleans_in syntax_tree in
   let program =
-    Syntax.record (fun recorder -> traverse { source; session; late_guards; recorder })
+    Syntax.record (fun recorder ->
+      traverse { source; session; late_guards; nested_booleans; recorder })
   in
   let%map () = Session.verify session in
   program

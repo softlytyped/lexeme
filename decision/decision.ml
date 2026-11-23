@@ -15,9 +15,16 @@ module Placement = struct
     | Settled
 end
 
+module Nesting = struct
+  type t =
+    | Nested
+    | Outermost
+end
+
 type t =
   { site : Source.Site.t
   ; keyword : string
   ; form : Form.t
   ; placement : Placement.t
+  ; nesting : Nesting.t
   }

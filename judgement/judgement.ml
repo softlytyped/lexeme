@@ -185,9 +185,11 @@ let declaration_of context (binding : Binding.t) =
 
 let decision_rules_of (decision : Decision.t) =
   let placement_rules =
-    match decision.placement with
-    | Late -> [ Rule.Branch Late_guard ]
-    | Settled -> []
+    match decision.placement, decision.nesting with
+    | Late, Nested -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
+    | Late, Outermost -> [ Rule.Branch Late_guard ]
+    | Settled, Nested -> [ Rule.Branch Nested_boolean ]
+    | Settled, Outermost -> []
   in
   match decision.form with
   | Boolean_match | Tuple_match 1 -> Rule.Branch Boolean_match :: placement_rules

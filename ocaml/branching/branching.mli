@@ -10,3 +10,7 @@ val form_of_cases : Parsetree.case list -> Decision.Form.t
     body's chain of [let]s reaches after work whose names neither their condition nor one
     of their branches uses. *)
 val late_guards_in : Merlin_kernel.Mreader.parsetree -> Source.Extent.Set.t
+
+(** Returns the extents of the matches on one Boolean that lie within a branch of another
+    Boolean decision of the same function body. *)
+val nested_booleans_in : Merlin_kernel.Mreader.parsetree -> Source.Extent.Set.t
