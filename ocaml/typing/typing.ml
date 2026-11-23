@@ -123,6 +123,8 @@ let role_of_description session annotation name =
   role_of_value (shape_at session (shape_of_annotation annotation) name)
 ;;
 
+let role_of_pattern session name = role_of_value (shape_at session (Value unknown) name)
+
 let role_of_label session annotation name =
   match shape_at session (shape_of_annotation annotation) name with
   | Value codomain -> Role.Field codomain

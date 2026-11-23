@@ -165,14 +165,15 @@ let run value =
     {| input.ml:7:7: note[plural-lift] entries_at: check whether this is a map-like lift of entry_at (line 5) |}]
 ;;
 
-let%expect_test "an object field and a typed callback parameter bind variables" =
+let%expect_test "a parameter that holds a function is named as one, and an object field is a variable" =
   check
     {|let apply (multiply : int -> int) number = multiply number
-let table = object val mutable x = 0 method is_empty = true end|};
+let table = object val mutable x = 0 method is_empty = true end
+let map transformation number = transformation (number + 1)|};
   [%expect
     {|
-    input.ml:1:12: error[variable-name] multiply: expected a noun phrase
     input.ml:2:32: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
+    input.ml:3:9: error[function-name] transformation: expected a root verb phrase, a prepositional name or a predicate
     |}]
 ;;
 

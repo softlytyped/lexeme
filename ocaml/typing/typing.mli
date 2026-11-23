@@ -25,6 +25,10 @@ val role_of_label
   -> string Location.loc
   -> Binding.Role.t
 
+(** A pattern, such as a function's parameter, binds a variable, or a function where its
+    type is one. *)
+val role_of_pattern : Session.t -> string Location.loc -> Binding.Role.t
+
 (** A method is a function of its object. *)
 val role_of_method
   :  ?annotation:Parsetree.core_type

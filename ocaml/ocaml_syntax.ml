@@ -217,7 +217,9 @@ let unwrap (iterator : Ast_iterator.iterator) = function
 let with_bindings context (iterator : Ast_iterator.iterator) : Ast_iterator.iterator =
   { iterator with
     attribute = (fun _ _ -> ())
-  ; pat = pattern ~binder:(declare context Variable)
+  ; pat =
+      pattern ~binder:(fun name ->
+        declare context (Typing.role_of_pattern context.session name) name)
   ; value_binding = define context
   ; value_description = specify context
   ; label_declaration = label context
