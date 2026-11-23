@@ -479,3 +479,21 @@ let classify first second = match first with true -> (match second with true -> 
     input.ml:2:54: warning[nested-boolean] match: a nested conditional on Booleans: parse, don't validate, with a variant type
     |}]
 ;;
+
+let%expect_test "a projection does no work before a guard" =
+  show
+    {|type settings = { limit : int }
+let choose settings items =
+  let limit = settings.limit in
+  match items with [] -> 0 | _ :: _ -> limit|};
+  [%expect {| |}]
+;;
+
+let%expect_test "a local function carries the work that it uses" =
+  show
+    {|let second items limit =
+  let total = List.length items in
+  let cap () = min total 10 in
+  match limit with None -> cap () | Some bound -> min bound total|};
+  [%expect {| |}]
+;;

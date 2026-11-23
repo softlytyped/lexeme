@@ -1,6 +1,6 @@
 (library
  (name test_ocaml_syntax)
- (libraries binding core ocaml_syntax syntax)
+ (libraries core display ocaml_syntax syntax)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

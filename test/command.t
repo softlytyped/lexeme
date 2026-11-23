@@ -93,3 +93,18 @@ definition by its length. A Boolean field is a predicate, and main keeps its nam
   shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase or an adjective phrase
   shapes.c:5:5: note[function-length] count_of: 12 source lines of code, more than 10
   [1]
+
+Settings come from the nearest .lexeme in the working directory or one of its parents.
+
+  $ mkdir -p settings/nested
+  $ cat > settings/.lexeme <<'EOF'
+  > ((vocabulary ((nouns (quux)))) (function_lines ((note 2) (warning 20) (error 30))))
+  > EOF
+  $ cat > settings/nested/sample.ml <<'EOF'
+  > let quux = 0
+  > let apply value =
+  >   let product = value * 2 in
+  >   product + 1
+  > EOF
+  $ cd settings/nested && lexeme sample.ml
+  sample.ml:2:5: note[function-length] apply: 3 source lines of code, more than 2

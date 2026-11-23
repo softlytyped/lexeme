@@ -1,30 +1,9 @@
 open! Core
 
-let role_of (binding : Binding.t) =
-  match binding.role with
-  | Variable -> "Variable"
-  | Function _ -> "Function"
-  | Field _ -> "Field"
-  | Type -> "Type"
-  | Constructor -> "Constructor"
-  | Test -> "Test"
-;;
-
-let algebra : Sexp.t Syntax.algebra =
-  { declare = (fun binding -> [%sexp (binding.name : string), (role_of binding : string)])
-  ; decide = (fun decision -> [%sexp (decision.keyword : string)])
-  ; enclose = (fun children -> Sexp.List children)
-  ; define =
-      (fun binding children ->
-        [%sexp
-          (binding.name : string), (role_of binding : string), (children : Sexp.t list)])
-  }
-;;
-
 let show text =
   Ocaml_syntax.read ~path:"input.ml" text
   |> Or_error.ok_exn
-  |> Syntax.fold algebra
+  |> Syntax.fold Display.algebra
   |> print_s
 ;;
 

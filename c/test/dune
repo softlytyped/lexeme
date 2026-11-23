@@ -1,0 +1,6 @@
+(library
+ (name test_c_syntax)
+ (libraries c_syntax core display syntax)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))
