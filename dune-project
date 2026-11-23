@@ -6,9 +6,14 @@
 
 (implicit_transitive_deps false)
 
+(source
+ (github softlytyped/lexeme))
+
 (package
  (name lexeme)
- (synopsis "Check the grammar of names at their binding sites")
+ (synopsis "A linter for the names and definitions of OCaml and C programs")
+ (description
+  "Lexeme reads each name where a program binds it and asks whether the name reads as English for what it names, and checks the length of each function and how its body branches.")
  (depends
   (ocaml (>= 5.4))
   dune

@@ -214,7 +214,8 @@ let lone_matches_of conditionals boolean_matches =
   | _ -> []
 ;;
 
-(* A function body keeps at most one if-else, and its one Boolean decision is an if-else. *)
+(* A function body keeps at most one if-then-else, which is how it writes a lone
+   condition. *)
 let body_rules_of binding (decisions : Decision.t list) =
   let of_form form =
     List.filter decisions ~f:(fun decision -> Decision.Form.equal decision.form form)

@@ -17,7 +17,7 @@ module Rule : sig
     type t =
       | Single_letter
       | Variable (** a noun phrase *)
-      | Function (** a verb phrase, a prepositional name or a predicate *)
+      | Function (** a verb phrase, a predicate or a noun phrase with a preposition *)
       | Predicate (** a predicate, for a function or field that gives a Boolean *)
       | Command (** a verb phrase, for a function that gives nothing *)
       | Field (** a noun phrase *)
@@ -37,19 +37,21 @@ module Rule : sig
   module Branch : sig
     (** How a function body branches, when that could read better. *)
     type t =
-      | Boolean_match (** a match on one Boolean, which a variant might name *)
+      | Boolean_match (** a match on one Boolean, which a variant type might name *)
       | Boolean_tuple of int (** a match on several Booleans at once *)
-      | Lone_boolean_match (** a function body's one Boolean decision, as a match *)
-      | Several_conditionals of string (** the lines of a function body's if-else *)
-      | Late_guard (** a guard after work that it does not use *)
-      | Nested_boolean (** a match on one Boolean within another Boolean decision *)
+      | Lone_boolean_match (** a function body's only Boolean condition, as a match *)
+      | Several_conditionals of string
+      (** the lines of a body's if-then-else expressions *)
+      | Late_guard (** a guard clause after work that it does not use *)
+      | Nested_boolean (** a match on one Boolean nested in another Boolean condition *)
   end
 
   type t =
     | Name of Name.t
     | Answer of Answer.t
     | Branch of Branch.t
-    | Plural_lift of Binding.t (** the singular function that the plural may lift *)
+    | Plural_lift of Binding.t
+    (** the singular that the plural may map over a collection *)
     | Function_length of
         { lines : int
         ; bound : int

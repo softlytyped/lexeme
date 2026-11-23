@@ -1,4 +1,4 @@
-(** A point where a function body branches. *)
+(** A conditional in a function body. *)
 
 open! Core
 
@@ -14,13 +14,13 @@ end
 
 module Placement : sig
   type t =
-    | Late (** a guard after work whose names neither its condition nor a branch uses *)
+    | Late (** a guard clause after work that neither its condition nor a branch uses *)
     | Settled
 end
 
 module Nesting : sig
   type t =
-    | Nested (** within a branch of a Boolean decision of the same function body *)
+    | Nested (** within a branch of a Boolean condition of the same function body *)
     | Outermost
 end
 

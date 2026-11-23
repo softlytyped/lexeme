@@ -113,8 +113,8 @@ let link_of work expression =
   | _ -> Option.map (tail_of expression) ~f:(fun tail -> String.Set.empty, tail)
 ;;
 
-(* A guard is late when work comes before it, and neither its condition nor one of its
-   branches uses that work. *)
+(* A guard clause is late when work comes before it, and neither its condition nor one of
+   its branches uses that work. *)
 let is_late work ~condition ~branches =
   (not (Set.is_empty work))
   && does_avoid work condition

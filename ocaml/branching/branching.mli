@@ -6,9 +6,9 @@ open Ocaml_parsing
 (** Returns the form of a match on these cases, by the Booleans its patterns name. *)
 val form_of_cases : Parsetree.case list -> Decision.Form.t
 
-(** Returns the extents of the late guards in each function body: the conditionals that a
-    body's chain of [let]s reaches after work whose names neither their condition nor one
-    of their branches uses. *)
+(** Returns the extents of the guard clauses that come late in each function body: those
+    that the body's chain of [let]s reaches after work which neither their condition nor
+    one of their branches uses. *)
 val late_guards_in : Merlin_kernel.Mreader.parsetree -> Source.Extent.Set.t
 
 (** Returns the extents of the matches on one Boolean that lie within a branch of another
