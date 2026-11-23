@@ -14,13 +14,21 @@ let diagnostics_of ?(path = "input.ml") text =
   |> Judgement.diagnostics_of
 ;;
 
-let check ?path text =
+(* Prints each finding as its position, its rule and its subject. *)
+let show ?path text =
+  List.iter (diagnostics_of ?path text) ~f:(fun (diagnostic : Diagnostic.t) ->
+    let { Source.Position.line; column } = diagnostic.site.position in
+    printf "%d:%d %s %s\n" line column (Diagnostic.code_of diagnostic) diagnostic.subject)
+;;
+
+(* Prints each finding in full. *)
+let print ?path text =
   List.iter (diagnostics_of ?path text) ~f:(fun diagnostic ->
     print_endline (Diagnostic.to_string diagnostic))
 ;;
 
-let%expect_test "only a plural subject and a singular function in its scope make a note" =
-  check
+let%expect_test "a plural meets a singular function in its own scope" =
+  show
     {|let sparse_matrices_at index = index
 let sparse_matrix_at index = index
 let matrix_of_indices index = index
@@ -28,76 +36,26 @@ let matrix_of_index index = index
 module Other = struct let entries_of items = items end
 let entry_of item = item
 let indices_of items = items
-let index_of = 0
-let apply value =
+let index_of = 0|};
+  [%expect
+    {|
+    1:5 plural-lift sparse_matrices_at
+    8:5 variable-name index_of
+    |}]
+;;
+
+let%expect_test "a local plural meets a singular in its own branch" =
+  show
+    {|let apply value =
   let bits_of items = items in
   let bit_of item = item in
   match value with
   | Some number -> let words_at items = items in words_at number
-  | None -> let word_at item = item in word_at value
-|};
-  [%expect
-    {|
-    input.ml:1:5: note[plural-lift] sparse_matrices_at: check whether this is a map-like lift of sparse_matrix_at (line 2)
-    input.ml:8:5: error[variable-name] index_of: expected a noun phrase
-    input.ml:10:7: note[plural-lift] bits_of: check whether this is a map-like lift of bit_of (line 11)
-    |}]
+  | None -> let word_at item = item in word_at value|};
+  [%expect {| 2:7 plural-lift bits_of |}]
 ;;
 
-let%expect_test "a letter exception belongs to the marked binder alone" =
-  check
-    {|let apply x (* lexeme: allow-letter published coordinate *) y = x
-let bind (z (* lexeme: allow-letter *) , value) = value
-let explain _i' = "(* lexeme: allow-letter in a string *)"
-let run ~f = fun v -> let%bind (j, k) = f v in j
-let store = let (x, _ as y) = (0, 0) in x + y
-let fold items = for i = 0 to 1 do () done
-|};
-  [%expect
-    {|
-    input.ml:1:61: error[single-letter] y: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:2:11: error[single-letter] z: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:3:13: error[single-letter] _i': use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:4:10: error[single-letter] f: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:4:18: error[single-letter] v: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:4:33: error[single-letter] j: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:4:36: error[single-letter] k: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:5:18: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:5:26: error[single-letter] y: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:6:22: error[single-letter] i: use a longer name or add a lexeme: allow-letter comment with a reason
-    |}]
-;;
-
-let%expect_test "signatures, typed aliases, noun variables and root verbs" =
-  check
-    ~path:"input.mli"
-    {|val matrices_of : int -> int list
-val matrix_of : int -> int
-val does_matrix : unit -> bool
-val multiply : int
-val x (* lexeme: allow-letter published coefficient *) : int
-module type Separate = sig val indices_at : int -> int list end
-module type Another = sig val index_at : int -> int end|};
-  check
-    {|let does_matrix : int -> int = Library.reduce
-let applies value = value
-let apply (multiply, exactly) = multiply
-let ( @@ ) left right = left right
-|};
-  [%expect
-    {|
-    input.mli:1:5: note[plural-lift] matrices_of: check whether this is a map-like lift of matrix_of (line 2)
-    input.mli:3:5: error[function-name] does_matrix: expected a root verb phrase, a prepositional name or a predicate
-    input.mli:4:5: error[variable-name] multiply: expected a noun phrase
-    input.ml:1:5: error[function-name] does_matrix: expected a root verb phrase, a prepositional name or a predicate
-    input.ml:1:5: error[predicate-result] does_matrix: expected a Boolean result, found int
-    input.ml:2:5: error[function-name] applies: expected a root verb phrase, a prepositional name or a predicate
-    input.ml:3:12: error[variable-name] multiply: expected a noun phrase
-    input.ml:3:22: error[variable-name] exactly: expected a noun phrase
-    |}]
-;;
-
-let%expect_test "declaration order preserves the set of plural notices" =
+let%expect_test "declaration order preserves the set of plural notes" =
   let declarations =
     [ "let entries_at items = items"
     ; "let entry_at item = item"
@@ -113,46 +71,15 @@ let%expect_test "declaration order preserves the set of plural notices" =
   [%expect {| |}]
 ;;
 
-let%expect_test "the predicate result is the final codomain, including any extra state" =
-  check
-    ~path:"decisions.mli"
-    {|val is_ready : (int -> string) -> count:int -> bool
-val has_entry : int -> bool option
-val does_accept : int -> bool Or_error.t
-val is_enabled : int -> (bool, Error.t) result
-val is_zero : int -> int
-val has_rows : int -> int option
-val has_width : int -> bool list
-val does_apply : (int -> bool) -> string
-val apply : int -> bool option|};
-  check
-    {|let is_ready value : bool option = Some value
-let does_accept value : bool Or_error.t = Ok value
-let has_value value : int = value|};
-  [%expect
-    {|
-    decisions.mli:2:5: note[predicate-state] has_entry: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
-    decisions.mli:3:5: note[predicate-state] does_accept: Are you sure Ok false is a meaningfully different state from Error? If so, you can ignore this note.
-    decisions.mli:4:5: note[predicate-state] is_enabled: Are you sure Ok false is a meaningfully different state from Error? If so, you can ignore this note.
-    decisions.mli:5:5: error[predicate-result] is_zero: expected a Boolean result, found int
-    decisions.mli:6:5: error[predicate-result] has_rows: expected a Boolean result, found int option
-    decisions.mli:7:5: error[predicate-result] has_width: expected a Boolean result, found bool list
-    decisions.mli:8:5: error[predicate-result] does_apply: expected a Boolean result, found string
-    input.ml:1:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
-    input.ml:2:5: note[predicate-state] does_accept: Are you sure Ok false is a meaningfully different state from Error? If so, you can ignore this note.
-    input.ml:3:5: error[predicate-result] has_value: expected a Boolean result, found int
-    |}]
-;;
-
 let%expect_test "a value shadows a singular function in the same lexical scope" =
-  check {|let entry_of item = item
+  show {|let entry_of item = item
 let entry_of = 0
 let entries_of items = items|};
-  [%expect {| input.ml:2:5: error[variable-name] entry_of: expected a noun phrase |}]
+  [%expect {| 2:5 variable-name entry_of |}]
 ;;
 
 let%expect_test "local declarations share a continuation and stop at sibling operands" =
-  check
+  show
     {|let apply value =
   ( (let entries_of items = items in entries_of value)
   , (let entry_of item = item in entry_of value) )
@@ -161,47 +88,166 @@ let run value =
   let%bind count = value in
   let entries_at items = items in
   entries_at count|};
-  [%expect
-    {| input.ml:7:7: note[plural-lift] entries_at: check whether this is a map-like lift of entry_at (line 5) |}]
+  [%expect {| 7:7 plural-lift entries_at |}]
 ;;
 
-let%expect_test "a parameter that holds a function is named as one, and an object field is a variable" =
-  check
-    {|let apply (multiply : int -> int) number = multiply number
-let table = object val mutable x = 0 method is_empty = true end
-let map transformation number = transformation (number + 1)|};
+let%expect_test "a letter exception belongs to the marked binder alone" =
+  show
+    {|let apply x (* lexeme: allow-letter published coordinate *) y = x
+let bind (z (* lexeme: allow-letter *) , value) = value
+let explain _i' = "(* lexeme: allow-letter in a string *)"|};
   [%expect
     {|
-    input.ml:2:32: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:3:9: error[function-name] transformation: expected a root verb phrase, a prepositional name or a predicate
+    1:61 single-letter y
+    2:11 single-letter z
+    3:13 single-letter _i'
     |}]
 ;;
 
-let%expect_test "a predicate is judged by its type through aliases and shadowing" =
-  check
+let%expect_test "a letter is judged wherever a pattern binds it" =
+  show
+    {|let run ~f = fun v -> let%bind (j, k) = f v in j
+let store = let (x, _ as y) = (0, 0) in x + y
+let fold items = for i = 0 to 1 do () done|};
+  [%expect
+    {|
+    1:10 single-letter f
+    1:18 single-letter v
+    1:33 single-letter j
+    1:36 single-letter k
+    2:18 single-letter x
+    2:26 single-letter y
+    3:22 single-letter i
+    |}]
+;;
+
+let%expect_test "an interface pairs a plural with its singular" =
+  show
+    ~path:"input.mli"
+    {|val matrices_of : int -> int list
+val matrix_of : int -> int
+module type Separate = sig val indices_at : int -> int list end
+module type Another = sig val index_at : int -> int end|};
+  [%expect {| 1:5 plural-lift matrices_of |}]
+;;
+
+let%expect_test "an interface names its values by their types" =
+  show
+    ~path:"input.mli"
+    {|val does_matrix : unit -> bool
+val multiply : int
+val x (* lexeme: allow-letter published coefficient *) : int|};
+  [%expect {|
+    1:5 function-name does_matrix
+    2:5 variable-name multiply
+    |}]
+;;
+
+let%expect_test "an implementation names its values by their types and its patterns" =
+  show
+    {|let does_matrix : int -> int = Library.reduce
+let applies value = value
+let apply (multiply, exactly) = multiply
+let ( @@ ) left right = left right|};
+  [%expect
+    {|
+    1:5 function-name does_matrix
+    1:5 predicate-result does_matrix
+    2:5 function-name applies
+    3:12 variable-name multiply
+    3:22 variable-name exactly
+    |}]
+;;
+
+let%expect_test "a predicate may give an optional or a fallible Boolean, with a note" =
+  show
+    ~path:"decisions.mli"
+    {|val is_ready : (int -> string) -> count:int -> bool
+val has_entry : int -> bool option
+val does_accept : int -> bool Or_error.t
+val is_enabled : int -> (bool, Error.t) result
+val apply : int -> bool option|};
+  [%expect
+    {|
+    2:5 predicate-state has_entry
+    3:5 predicate-state does_accept
+    4:5 predicate-state is_enabled
+    |}]
+;;
+
+let%expect_test "a predicate that gives anything else is an error" =
+  show
+    ~path:"decisions.mli"
+    {|val is_zero : int -> int
+val has_rows : int -> int option
+val has_width : int -> bool list
+val does_apply : (int -> bool) -> string|};
+  [%expect
+    {|
+    1:5 predicate-result is_zero
+    2:5 predicate-result has_rows
+    3:5 predicate-result has_width
+    4:5 predicate-result does_apply
+    |}]
+;;
+
+let%expect_test "a written result annotation names a predicate's result" =
+  show
+    {|let is_ready value : bool option = Some value
+let does_accept value : bool Or_error.t = Ok value
+let has_value value : int = value|};
+  [%expect
+    {|
+    1:5 predicate-state is_ready
+    2:5 predicate-state does_accept
+    3:5 predicate-result has_value
+    |}]
+;;
+
+let%expect_test "a predicate is judged by its type through aliases" =
+  show
     ~path:"decisions.mli"
     {|type decision = bool option
 type operation = int -> decision
-val is_ready : operation
-type bool = int
+val is_ready : operation|};
+  [%expect {| 3:5 predicate-state is_ready |}]
+;;
+
+let%expect_test "a predicate is judged by its type through shadowing" =
+  show
+    ~path:"decisions.mli"
+    {|type bool = int
 val has_rows : unit -> bool
 module Bool : sig type t = string end
 val is_empty : unit -> Bool.t|};
-  check {|let apply value =
-  let does_reduce = String.length in
-  does_reduce value|};
   [%expect
     {|
-    decisions.mli:3:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
-    decisions.mli:4:6: error[type-name] bool: expected a noun phrase
-    decisions.mli:5:5: error[predicate-result] has_rows: expected a Boolean result, found int
-    decisions.mli:7:5: error[predicate-result] is_empty: expected a Boolean result, found string
-    input.ml:2:7: error[predicate-result] does_reduce: expected a Boolean result, found int
+    1:6 type-name bool
+    2:5 predicate-result has_rows
+    4:5 predicate-result is_empty
+    |}]
+;;
+
+let%expect_test "a local alias of a function is judged by its type" =
+  show {|let apply value =
+  let does_reduce = String.length in
+  does_reduce value|};
+  [%expect {| 2:7 predicate-result does_reduce |}]
+;;
+
+let%expect_test "a parameter that holds a function is named as one" =
+  show
+    {|let apply (multiply : int -> int) number = multiply number
+let table = object val mutable x = 0 method is_empty = true end
+let map transformation number = transformation (number + 1)|};
+  [%expect {|
+    2:32 single-letter x
+    3:9 function-name transformation
     |}]
 ;;
 
 let%expect_test "a function's name agrees with what it gives" =
-  check
+  show
     ~path:"agreement.mli"
     {|val contains : int list -> int -> bool
 val is_empty : int list -> bool
@@ -209,15 +255,42 @@ val entries_of : int -> unit
 val of_int : int -> unit
 val print : int -> unit
 val size_of : int list -> int|};
-  check {|let matches left right = left = right
-let report count = ignore count|};
   [%expect
     {|
-    agreement.mli:1:5: error[predicate-name] contains: expected a predicate such as is_empty or has_entries for a Boolean
-    agreement.mli:3:5: error[command-name] entries_of: expected a root verb phrase for a function that gives nothing
-    agreement.mli:4:5: error[command-name] of_int: expected a root verb phrase for a function that gives nothing
-    input.ml:1:5: error[predicate-name] matches: expected a predicate such as is_empty or has_entries for a Boolean
+    1:5 predicate-name contains
+    3:5 command-name entries_of
+    4:5 command-name of_int
     |}]
+;;
+
+let%expect_test "an inferred type names a function as a written one does" =
+  show {|let matches left right = left = right
+let report count = ignore count|};
+  [%expect {| 1:5 predicate-name matches |}]
+;;
+
+let%expect_test "types and fields are nouns, and a field that holds a Boolean is a \
+                 predicate"
+  =
+  show
+    ~path:"shapes.mli"
+    {|type t
+type matrix = { rows : int; is_square : bool; ready : bool; transpose : int -> int }
+type quickly
+type x|};
+  [%expect
+    {|
+    2:47 predicate-name ready
+    3:6 type-name quickly
+    4:6 single-letter x
+    |}]
+;;
+
+let%expect_test "a constructor is a noun phrase or an adjective phrase" =
+  show
+    ~path:"shapes.mli"
+    {|type verdict = Accepted | Rejected | Strictly_positive | Quickly | Late of int|};
+  [%expect {| 1:58 constructor-name Quickly |}]
 ;;
 
 (* A function of [lines] lines of code, with a blank line and a comment between each,
@@ -228,111 +301,93 @@ let function_of_length lines =
 ;;
 
 let%expect_test "a function past each limit earns a note, a warning and then an error" =
-  List.iter [ 10; 11; 20; 21; 30; 31 ] ~f:(fun lines -> check (function_of_length lines));
+  List.iter [ 10; 11; 20; 21; 30; 31 ] ~f:(fun lines -> print (function_of_length lines));
   [%expect
     {|
-    input.ml:1:5: note[function-length] apply: 11 lines of code, more than 10
-    input.ml:1:5: note[function-length] apply: 20 lines of code, more than 10
-    input.ml:1:5: warning[function-length] apply: 21 lines of code, more than 20
-    input.ml:1:5: warning[function-length] apply: 30 lines of code, more than 20
-    input.ml:1:5: error[function-length] apply: 31 lines of code, more than 30
+    input.ml:1:5: note[function-length] apply: 11 source lines of code, more than 10
+    input.ml:1:5: note[function-length] apply: 20 source lines of code, more than 10
+    input.ml:1:5: warning[function-length] apply: 21 source lines of code, more than 20
+    input.ml:1:5: warning[function-length] apply: 30 source lines of code, more than 20
+    input.ml:1:5: error[function-length] apply: 31 source lines of code, more than 30
     |}]
 ;;
 
-let%expect_test "an exemption spares a name but not its length" =
-  check {|let main () = ()|};
-  check
-    (String.substr_replace_first (function_of_length 11) ~pattern:"apply" ~with_:"main");
-  [%expect {| input.ml:1:5: note[function-length] main: 11 lines of code, more than 10 |}]
-;;
-
-let%expect_test "limits must rise from note to warning to error" =
-  List.iter
-    [ "((note 10) (warning 20) (error 30))"
-    ; "((note 20) (warning 10) (error 30))"
-    ; "((note 0) (warning 0) (error 0))"
-    ]
-    ~f:(fun text ->
-      let limits =
-        Or_error.try_with (fun () -> Judgement.Limits.t_of_sexp (Sexp.of_string text))
-      in
-      print_s [%sexp (Result.is_ok limits : bool)]);
-  [%expect {|
-    true
-    false
-    false
-    |}]
-;;
-
-let%expect_test "types and fields are nouns, and a field that holds a Boolean is a \
-                 predicate"
-  =
-  check
-    ~path:"shapes.mli"
-    {|type t
-type matrix = { rows : int; is_square : bool; ready : bool; transpose : int -> int }
-type quickly
-type x
-type verdict = Accepted | Rejected | Strictly_positive | Quickly | Late of int|};
-  [%expect
-    {|
-    shapes.mli:2:47: error[predicate-name] ready: expected a predicate such as is_empty or has_entries for a Boolean
-    shapes.mli:3:6: error[type-name] quickly: expected a noun phrase
-    shapes.mli:4:6: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
-    shapes.mli:5:58: error[constructor-name] Quickly: expected a noun phrase or an adjective phrase
-    |}]
-;;
-
-let%expect_test "a function body branches on Booleans with at most one if-else" =
-  check
-    {|let decide flag = match flag with true -> 1 | false -> 0
-let choose flag = if flag then 1 else 0
-let compare first second = if first then 1 else if second then 2 else 3
-let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3
-let pick flag value = match flag, value with true, Some _ -> 1 | _ -> 0
-let count items = match items with [] -> 0 | _ :: _ -> 1|};
-  [%expect
-    {|
-    input.ml:1:19: warning[lone-boolean-match] match: the one Boolean decision of its function reads as an if-else
-    input.ml:1:19: note[boolean-match] match: could a variant name the cases of this Boolean?
-    input.ml:3:5: warning[if-else] compare: has if-else on lines 3, 3: keep at most one, and match the rest
-    input.ml:4:29: error[boolean-tuple] match: matches 2 Booleans at once: parse, don't validate, with a variant
-    input.ml:5:23: note[boolean-match] match: could a variant name the cases of this Boolean?
-    |}]
-;;
-
-let%expect_test "a guard after work that it does not use asks to come first" =
-  check
-    {|let total items limit =
-  let sum = List.fold items ~init:0 ~f:( + ) in
-  match limit with
-  | None -> Error "no limit"
-  | Some bound -> Ok (min sum bound)
-let scale items factor =
-  let sum = List.fold items ~init:0 ~f:( + ) in
-  if sum > factor then sum else factor
-let check items =
-  let increment item = item + 1 in
-  if List.is_empty items then Error "empty" else Ok (List.map items ~f:increment)|};
-  [%expect
-    {|
-    input.ml:3:3: note[late-guard] match: this precondition uses none of the work before it: could it come first?
-    input.ml:10:7: error[function-name] increment: expected a root verb phrase, a prepositional name or a predicate
-    |}]
-;;
-
-let%expect_test "an inline test has more room than a function" =
+let%expect_test "an inline test has five more lines at each limit" =
   let test_of_length lines =
     let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore 0;\n") in
     "let%expect_test \"example\" =\n" ^ String.concat steps ^ "  ()\n"
   in
-  List.iter [ 15; 16 ] ~f:(fun lines -> check (test_of_length lines));
-  [%expect
-    {| input.ml:1:1: note[function-length] "example": 16 lines of code, more than 15 |}]
+  List.iter [ 15; 16 ] ~f:(fun lines -> show (test_of_length lines));
+  [%expect {| 1:1 function-length "example" |}]
 ;;
 
-let%expect_test "a Boolean match within another Boolean decision asks for a variant" =
-  check
+let%expect_test "an exemption spares a name but not its length" =
+  show {|let main () = ()|};
+  show
+    (String.substr_replace_first (function_of_length 11) ~pattern:"apply" ~with_:"main");
+  [%expect {| 1:5 function-length main |}]
+;;
+
+let%expect_test "limits must rise from note to warning to error" =
+  [ "((note 10) (warning 20) (error 30))"
+  ; "((note 20) (warning 10) (error 30))"
+  ; "((note 0) (warning 0) (error 0))"
+  ]
+  |> List.map ~f:(fun text ->
+    Or_error.try_with (fun () -> Judgement.Limits.t_of_sexp (Sexp.of_string text)))
+  |> List.map ~f:Result.is_ok
+  |> [%sexp_of: bool list]
+  |> print_s;
+  [%expect {| (true false false) |}]
+;;
+
+let%expect_test "a function body's one Boolean decision is an if-then-else" =
+  show
+    {|let decide flag = match flag with true -> 1 | false -> 0
+let choose flag = if flag then 1 else 0
+let compare first second = if first then 1 else if second then 2 else 3|};
+  [%expect
+    {|
+    1:19 lone-boolean-match match
+    1:19 boolean-match match
+    3:5 if-else compare
+    |}]
+;;
+
+let%expect_test "a match on several Booleans is an error, and on one a note" =
+  show
+    {|let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3
+let pick flag value = match flag, value with true, Some _ -> 1 | _ -> 0
+let count items = match items with [] -> 0 | _ :: _ -> 1|};
+  [%expect {|
+    1:29 boolean-tuple match
+    2:23 boolean-match match
+    |}]
+;;
+
+let%expect_test "a guard after work that it does not use asks to come first" =
+  show
+    {|let total items limit =
+  let sum = List.fold items ~init:0 ~f:( + ) in
+  match limit with
+  | None -> Error "no limit"
+  | Some bound -> Ok (min sum bound)|};
+  [%expect {| 3:3 late-guard match |}]
+;;
+
+let%expect_test "a guard that uses the work, or follows no work, is in its place" =
+  show
+    {|let scale items factor =
+  let sum = List.fold items ~init:0 ~f:( + ) in
+  if sum > factor then sum else factor
+let check items =
+  let double item = item * 2 in
+  if List.is_empty items then Error "empty" else Ok (List.map items ~f:double)|};
+  [%expect {| |}]
+;;
+
+let%expect_test "a Boolean match within another Boolean decision asks for a variant type" =
+  show
     {|let classify first second =
   match first with
   | true -> (match second with true -> 1 | false -> 2)
@@ -340,8 +395,87 @@ let%expect_test "a Boolean match within another Boolean decision asks for a vari
 let label flag items = if flag then (match items with [] -> 0 | _ -> 1) else 2|};
   [%expect
     {|
-    input.ml:2:3: note[boolean-match] match: could a variant name the cases of this Boolean?
-    input.ml:3:13: note[boolean-match] match: could a variant name the cases of this Boolean?
-    input.ml:3:13: warning[nested-boolean] match: a Boolean match within another Boolean decision: parse, don't validate, with a variant
+    2:3 boolean-match match
+    3:13 boolean-match match
+    3:13 nested-boolean match
+    |}]
+;;
+
+let%expect_test "each rule on the names of values explains itself" =
+  print
+    {|let x = 0
+let quickly = 0
+let matrix () = 0
+let contains () = true
+let entries_of () = ()|};
+  [%expect
+    {|
+    input.ml:1:5: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
+    input.ml:2:5: error[variable-name] quickly: expected a noun phrase
+    input.ml:3:5: error[function-name] matrix: expected a verb phrase, a predicate or a noun phrase with a preposition
+    input.ml:4:5: error[predicate-name] contains: expected a predicate, such as is_empty or has_entries, for a Boolean
+    input.ml:5:5: error[command-name] entries_of: expected a verb phrase for a command (command-query separation)
+    |}]
+;;
+
+let%expect_test "each rule on the names of types explains itself" =
+  print {|type quickly = Quickly
+type record = { quickly : int }|};
+  [%expect
+    {|
+    input.ml:1:6: error[type-name] quickly: expected a noun phrase
+    input.ml:1:16: error[constructor-name] Quickly: expected a noun phrase or an adjective phrase
+    input.ml:2:17: error[field-name] quickly: expected a noun phrase
+    |}]
+;;
+
+let%expect_test "each rule on results explains itself" =
+  print
+    {|let is_ready () = Some true
+let does_accept () : bool Or_error.t = Ok true
+let is_zero () = 0|};
+  [%expect
+    {|
+    input.ml:1:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
+    input.ml:2:5: note[predicate-state] does_accept: Are you sure Ok false is a meaningfully different state from Error? If so, you can ignore this note.
+    input.ml:3:5: error[predicate-result] is_zero: expected a Boolean result, found int
+    |}]
+;;
+
+let%expect_test "each rule on plurals and lengths explains itself" =
+  print {|let entries_of items = items
+let entry_of item = item|};
+  print (function_of_length 11);
+  [%expect
+    {|
+    input.ml:1:5: note[plural-lift] entries_of: check whether this maps entry_of over a collection (line 2)
+    input.ml:1:5: note[function-length] apply: 11 source lines of code, more than 10
+    |}]
+;;
+
+let%expect_test "each rule on Boolean conditions explains itself" =
+  print
+    {|let decide flag = match flag with true -> 1 | false -> 0
+let compare first second = if first then 1 else if second then 2 else 3
+let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3|};
+  [%expect
+    {|
+    input.ml:1:19: warning[lone-boolean-match] match: the only Boolean condition of its function: use if-then-else
+    input.ml:1:19: note[boolean-match] match: could a variant type name the cases of this Boolean?
+    input.ml:2:5: warning[if-else] compare: if-then-else on lines 2, 2: use pattern matching for all but one
+    input.ml:3:29: error[boolean-tuple] match: matches 2 Booleans at once: parse, don't validate, with a variant type
+    |}]
+;;
+
+let%expect_test "each rule on guards and nesting explains itself" =
+  print
+    {|let total items limit = let sum = List.length items in match limit with None -> 0 | Some _ -> sum
+let classify first second = match first with true -> (match second with true -> 1 | false -> 2) | false -> 3|};
+  [%expect
+    {|
+    input.ml:1:56: note[late-guard] match: a guard clause after work that it does not use: could it come first?
+    input.ml:2:29: note[boolean-match] match: could a variant type name the cases of this Boolean?
+    input.ml:2:54: note[boolean-match] match: could a variant type name the cases of this Boolean?
+    input.ml:2:54: warning[nested-boolean] match: a nested conditional on Booleans: parse, don't validate, with a variant type
     |}]
 ;;

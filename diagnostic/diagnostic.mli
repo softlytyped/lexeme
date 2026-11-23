@@ -40,7 +40,7 @@ module Rule : sig
       | Boolean_match (** a match on one Boolean, which a variant might name *)
       | Boolean_tuple of int (** a match on several Booleans at once *)
       | Lone_boolean_match (** a function body's one Boolean decision, as a match *)
-      | Several_ifs of Source.Position.t list (** a function body's if-else expressions *)
+      | Several_conditionals of string (** the lines of a function body's if-else *)
       | Late_guard (** a guard after work that it does not use *)
       | Nested_boolean (** a match on one Boolean within another Boolean decision *)
   end
@@ -68,6 +68,9 @@ val create : site:Source.Site.t -> subject:string -> Rule.t -> t
 val of_binding : Binding.t -> Rule.t -> t
 val of_decision : Decision.t -> Rule.t -> t
 val severity_of : t -> Severity.t
+
+(** Returns the name of the rule, such as [variable-name]. *)
+val code_of : t -> string
 
 (** Returns the diagnostic as [path:line:column: severity[code] subject: message]. *)
 val to_string : t -> string

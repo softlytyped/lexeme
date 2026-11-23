@@ -4,6 +4,11 @@ open Parsetree
 
 let base = Ast_iterator.default_iterator
 
+let iterate (iterator : Ast_iterator.iterator) = function
+  | `Interface items -> iterator.signature iterator items
+  | `Implementation items -> iterator.structure iterator items
+;;
+
 let rec alternatives_of pattern =
   match pattern.ppat_desc with
   | Ppat_or (left, right) -> alternatives_of left @ alternatives_of right
@@ -34,178 +39,186 @@ let form_of_cases cases =
     if List.exists patterns ~f:is_boolean then Boolean_match else Other_match
 ;;
 
-(* Returns the names that a selection finds at the patterns and expressions beneath a
-   node. *)
-let names_in traversal ~pattern ~expression =
+(* Returns the names that a traversal adds as it goes. *)
+let gather traverse =
   let names = Queue.create () in
-  let gather selection node = Option.iter (selection node) ~f:(Queue.enqueue names) in
-  let iterator =
-    { base with
-      pat =
-        (fun self node ->
-          gather pattern node;
-          base.pat self node)
-    ; expr =
-        (fun self node ->
-          gather expression node;
-          base.expr self node)
-    }
-  in
-  traversal iterator;
+  traverse (Queue.enqueue names);
   String.Set.of_list (Queue.to_list names)
 ;;
 
-let name_bound_at pattern =
-  match pattern.ppat_desc with
-  | Ppat_var name | Ppat_alias (_, name) -> Some name.txt
-  | _ -> None
-;;
-
-let identifier_at expression =
-  match expression.pexp_desc with
-  | Pexp_ident { txt = Lident name; _ } -> Some name
-  | _ -> None
-;;
-
 let names_bound_by pattern =
-  let traversal (iterator : Ast_iterator.iterator) = iterator.pat iterator pattern in
-  names_in traversal ~pattern:name_bound_at ~expression:(Fn.const None)
+  gather (fun add ->
+    let visit self node =
+      (match node.ppat_desc with
+       | Ppat_var name | Ppat_alias (_, name) -> add name.txt
+       | _ -> ());
+      base.pat self node
+    in
+    let iterator = { base with pat = visit } in
+    iterator.pat iterator pattern)
 ;;
 
-let is_free_of work expression =
-  let traversal (iterator : Ast_iterator.iterator) = iterator.expr iterator expression in
-  Set.are_disjoint
-    work
-    (names_in traversal ~pattern:(Fn.const None) ~expression:identifier_at)
+let identifiers_in expression =
+  gather (fun add ->
+    let visit self node =
+      (match node.pexp_desc with
+       | Pexp_ident { txt = Lident name; _ } -> add name
+       | _ -> ());
+      base.expr self node
+    in
+    let iterator = { base with expr = visit } in
+    iterator.expr iterator expression)
 ;;
 
-(* A local function, an alias and a constant do no work, though any other definition does. *)
-let work_of definitions =
+let does_avoid work expression = Set.are_disjoint work (identifiers_in expression)
+
+let is_trivial expression =
+  match expression.pexp_desc with
+  | Pexp_function _ | Pexp_ident _ | Pexp_constant _ | Pexp_field _ -> true
+  | _ -> false
+;;
+
+(* A local function, an alias, a constant and a projection do no work of their own, but
+   carry the work that they use. Any other definition does work. *)
+let work_of work definitions =
   List.filter definitions ~f:(fun definition ->
-    match definition.pvb_expr.pexp_desc with
-    | Pexp_function _ | Pexp_ident _ | Pexp_constant _ -> false
-    | _ -> true)
+    (not (is_trivial definition.pvb_expr)) || not (does_avoid work definition.pvb_expr))
   |> List.map ~f:(fun definition -> names_bound_by definition.pvb_pat)
   |> String.Set.union_list
 ;;
 
-(* The work that the next link of a body's chain does, and the rest of the chain. *)
-let link_of expression =
+let work_of_operations operations =
+  List.map operations ~f:(fun operation -> names_bound_by operation.pbop_pat)
+  |> String.Set.union_list
+;;
+
+(* The expression beneath a wrapper that does no work: the rest of a sequence, a
+   constraint, a type, an open or an extension. *)
+let tail_of expression =
   match expression.pexp_desc with
-  | Pexp_let (_, _, definitions, rest) -> Some (work_of definitions, rest)
-  | Pexp_letop { let_ = first; ands; body } ->
-    let patterns = List.map (first :: ands) ~f:(fun operation -> operation.pbop_pat) in
-    Some (String.Set.union_list (List.map patterns ~f:names_bound_by), body)
-  | Pexp_sequence (_, rest)
-  | Pexp_constraint (rest, _, _)
-  | Pexp_newtype (_, _, rest)
-  | Pexp_open (_, rest)
-  | Pexp_extension (_, PStr [ { pstr_desc = Pstr_eval (rest, _); _ } ]) ->
-    Some (String.Set.empty, rest)
+  | Pexp_sequence (_, tail)
+  | Pexp_constraint (tail, _, _)
+  | Pexp_newtype (_, _, tail)
+  | Pexp_open (_, tail)
+  | Pexp_extension (_, PStr [ { pstr_desc = Pstr_eval (tail, _); _ } ]) -> Some tail
   | _ -> None
+;;
+
+(* The work that the next link of a body's chain does, and the rest of the chain. *)
+let link_of work expression =
+  match expression.pexp_desc with
+  | Pexp_let (_, _, definitions, rest) -> Some (work_of work definitions, rest)
+  | Pexp_letop { let_ = first; ands = later_operations; body } ->
+    Some (work_of_operations (first :: later_operations), body)
+  | _ -> Option.map (tail_of expression) ~f:(fun tail -> String.Set.empty, tail)
 ;;
 
 (* A guard is late when work comes before it, and neither its condition nor one of its
    branches uses that work. *)
+let is_late work ~condition ~branches =
+  (not (Set.is_empty work))
+  && does_avoid work condition
+  && List.exists branches ~f:(does_avoid work)
+;;
+
 let is_late_guard work expression =
-  let is_late condition branches =
-    (not (Set.is_empty work))
-    && is_free_of work condition
-    && List.exists branches ~f:(is_free_of work)
-  in
   match expression.pexp_desc with
   | Pexp_ifthenelse (condition, consequent, alternative) ->
-    is_late condition (consequent :: Option.to_list alternative)
+    is_late work ~condition ~branches:(consequent :: Option.to_list alternative)
   | Pexp_match (scrutinee, cases) ->
-    is_late scrutinee (List.map cases ~f:(fun case -> case.pc_rhs))
+    is_late
+      work
+      ~condition:scrutinee
+      ~branches:(List.map cases ~f:(fun case -> case.pc_rhs))
   | _ -> false
 ;;
 
+let statements_of expression =
+  match expression.pexp_desc with
+  | Pexp_sequence (statement, _) -> [ expression; statement ]
+  | _ -> [ expression ]
+;;
+
 let rec late_guards_on work expression =
-  let statements =
-    match expression.pexp_desc with
-    | Pexp_sequence (statement, _) -> [ expression; statement ]
-    | _ -> [ expression ]
-  in
-  let guards = List.filter statements ~f:(is_late_guard work) in
+  let guards = List.filter (statements_of expression) ~f:(is_late_guard work) in
   let extents = List.map guards ~f:(fun guard -> Session.extent_of guard.pexp_loc) in
-  match link_of expression with
+  match link_of work expression with
   | Some (links, rest) -> extents @ late_guards_on (Set.union work links) rest
   | None -> extents
 ;;
 
-let late_guards_in parsetree =
+let guards_of_function expression =
+  match expression.pexp_desc with
+  | Pexp_function (_, _, Pfunction_body body) -> late_guards_on String.Set.empty body
+  | _ -> []
+;;
+
+let late_guards_in syntax_tree =
   let guards = Queue.create () in
-  let gather expression =
-    match expression.pexp_desc with
-    | Pexp_function (_, _, Pfunction_body body) ->
-      Queue.enqueue_all guards (late_guards_on String.Set.empty body)
-    | _ -> ()
+  let visit self expression =
+    Queue.enqueue_all guards (guards_of_function expression);
+    base.expr self expression
   in
-  let iterator =
-    { base with
-      expr =
-        (fun self node ->
-          gather node;
-          base.expr self node)
-    }
-  in
-  (match parsetree with
-   | `Interface items -> iterator.signature iterator items
-   | `Implementation items -> iterator.structure iterator items);
+  iterate { base with expr = visit } syntax_tree;
   Source.Extent.Set.of_list (Queue.to_list guards)
 ;;
 
 let is_boolean_form = function
   | Decision.Form.Boolean_match -> true
   | Tuple_match count -> count > 0
-  | If | Other_match -> false
+  | Conditional | Other_match -> false
 ;;
 
 (* The Boolean decisions that enclose a traversal's expression within its function body,
    and the Boolean matches that we have found within another. *)
 type nesting =
   { mutable depth : int
-  ; nested : Source.Extent.t Queue.t
+  ; nested_matches : Source.Extent.t Queue.t
   }
 
-let within nesting ~depth traversal =
+let situate nesting ~depth traverse =
   let outer_depth = nesting.depth in
   nesting.depth <- depth;
-  traversal ();
+  traverse ();
   nesting.depth <- outer_depth
 ;;
 
-let track_match nesting (self : Ast_iterator.iterator) expression scrutinee cases =
+let follow nesting (self : Ast_iterator.iterator) expression scrutinee cases =
   let form = form_of_cases cases in
   if nesting.depth > 0 && Decision.Form.equal form Boolean_match
-  then Queue.enqueue nesting.nested (Session.extent_of expression.pexp_loc);
+  then Queue.enqueue nesting.nested_matches (Session.extent_of expression.pexp_loc);
   self.expr self scrutinee;
-  within nesting ~depth:(nesting.depth + Bool.to_int (is_boolean_form form)) (fun () ->
-    List.iter cases ~f:(self.case self))
+  situate
+    nesting
+    ~depth:(nesting.depth + Bool.to_int (is_boolean_form form))
+    (fun () -> List.iter cases ~f:(self.case self))
+;;
+
+let fork nesting (self : Ast_iterator.iterator) condition branches =
+  self.expr self condition;
+  situate nesting ~depth:(nesting.depth + 1) (fun () ->
+    List.iter branches ~f:(self.expr self))
 ;;
 
 (* A function's body starts at no depth, or within its own match where that is on a
    Boolean. *)
+let depth_of_body = function
+  | Pfunction_cases (cases, _, _) -> Bool.to_int (is_boolean_form (form_of_cases cases))
+  | Pfunction_body _ -> 0
+;;
+
 let track nesting (self : Ast_iterator.iterator) expression =
   match expression.pexp_desc with
   | Pexp_ifthenelse (condition, consequent, alternative) ->
-    self.expr self condition;
-    within nesting ~depth:(nesting.depth + 1) (fun () ->
-      List.iter (consequent :: Option.to_list alternative) ~f:(self.expr self))
-  | Pexp_match (scrutinee, cases) -> track_match nesting self expression scrutinee cases
-  | Pexp_function (_, _, Pfunction_cases (cases, _, _)) ->
-    let depth = Bool.to_int (is_boolean_form (form_of_cases cases)) in
-    within nesting ~depth (fun () -> base.expr self expression)
-  | Pexp_function _ -> within nesting ~depth:0 (fun () -> base.expr self expression)
+    fork nesting self condition (consequent :: Option.to_list alternative)
+  | Pexp_match (scrutinee, cases) -> follow nesting self expression scrutinee cases
+  | Pexp_function (_, _, body) ->
+    situate nesting ~depth:(depth_of_body body) (fun () -> base.expr self expression)
   | _ -> base.expr self expression
 ;;
 
-let nested_booleans_in parsetree =
-  let nesting = { depth = 0; nested = Queue.create () } in
-  let iterator = { base with expr = track nesting } in
-  (match parsetree with
-   | `Interface items -> iterator.signature iterator items
-   | `Implementation items -> iterator.structure iterator items);
-  Source.Extent.Set.of_list (Queue.to_list nesting.nested)
+let nested_booleans_in syntax_tree =
+  let nesting = { depth = 0; nested_matches = Queue.create () } in
+  iterate { base with expr = track nesting } syntax_tree;
+  Source.Extent.Set.of_list (Queue.to_list nesting.nested_matches)
 ;;

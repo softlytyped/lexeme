@@ -6,7 +6,7 @@ An OCaml interface and a C translation unit use the same naming algebra.
   > val has_entries : int -> bool
   > EOF
   $ lexeme sample.mli
-  sample.mli:1:5: note[plural-lift] indices_at: check whether this is a map-like lift of index_at (line 2)
+  sample.mli:1:5: note[plural-lift] indices_at: check whether this maps index_at over a collection (line 2)
 
   $ cat > included.h <<'EOF'
   > int entry_of(int x);
@@ -23,7 +23,7 @@ An OCaml interface and a C translation unit use the same naming algebra.
   > }
   > EOF
   $ lexeme sample.c
-  sample.c:3:12: note[plural-lift] words_at: check whether this is a map-like lift of word_at (line 4)
+  sample.c:3:12: note[plural-lift] words_at: check whether this maps word_at over a collection (line 4)
   sample.c:5:70: error[single-letter] y: use a longer name or add a lexeme: allow-letter comment with a reason
   sample.c:6:7: error[variable-name] multiply: expected a noun phrase
   sample.c:7:12: error[single-letter] i: use a longer name or add a lexeme: allow-letter comment with a reason
@@ -89,7 +89,7 @@ definition by its length. A Boolean field is a predicate, and main keeps its nam
   > int main(void) { return 0; }
   > EOF
   $ lexeme shapes.c
-  shapes.c:2:42: error[predicate-name] ready: expected a predicate such as is_empty or has_entries for a Boolean
+  shapes.c:2:42: error[predicate-name] ready: expected a predicate, such as is_empty or has_entries, for a Boolean
   shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase or an adjective phrase
-  shapes.c:5:5: note[function-length] count_of: 12 lines of code, more than 10
+  shapes.c:5:5: note[function-length] count_of: 12 source lines of code, more than 10
   [1]

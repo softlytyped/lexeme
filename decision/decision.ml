@@ -2,7 +2,7 @@ open! Core
 
 module Form = struct
   type t =
-    | If
+    | Conditional
     | Boolean_match
     | Tuple_match of int
     | Other_match

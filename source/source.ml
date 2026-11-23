@@ -60,37 +60,30 @@ let comment_mask_of text comments =
 
 let code_lines_of text line_starts comments =
   let mask = comment_mask_of text comments in
-  let is_code_at offset = not (mask.(offset) || Char.is_whitespace text.[offset]) in
+  let is_code offset = not (mask.(offset) || Char.is_whitespace text.[offset]) in
+  let offsets_of line = Sequence.range line_starts.(line) line_starts.(line + 1) in
   Array.init
     (Array.length line_starts - 1)
-    ~f:(fun line ->
-      Sequence.exists
-        (Sequence.range line_starts.(line) line_starts.(line + 1))
-        ~f:is_code_at)
+    ~f:(fun line -> Sequence.exists (offsets_of line) ~f:is_code)
+;;
+
+let bodies_of comments =
+  List.map comments ~f:(fun (comment : Comment.t) -> comment.extent.start, comment.body)
+  |> Int.Map.of_alist_reduce ~f:Fn.const
 ;;
 
 let create ~path ~comments text =
   let line_starts = line_starts_of text in
-  { path
-  ; text
-  ; line_starts
-  ; code_lines = code_lines_of text line_starts comments
-  ; comments =
-      List.map comments ~f:(fun (comment : Comment.t) ->
-        comment.extent.start, comment.body)
-      |> Int.Map.of_alist_reduce ~f:Fn.const
-  }
+  let code_lines = code_lines_of text line_starts comments in
+  { path; text; line_starts; code_lines; comments = bodies_of comments }
 ;;
 
+(* The last line start is the length of the text, which starts no line. *)
 let line_at source offset =
   let lines = Array.length source.code_lines in
+  let order = `Last_less_than_or_equal_to in
   match
-    Array.binary_search
-      source.line_starts
-      ~len:lines
-      ~compare:Int.compare
-      `Last_less_than_or_equal_to
-      offset
+    Array.binary_search source.line_starts ~len:lines ~compare:Int.compare order offset
   with
   | Some line -> line
   | None -> 0

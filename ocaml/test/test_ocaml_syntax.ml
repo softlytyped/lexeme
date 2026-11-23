@@ -21,7 +21,7 @@ let algebra : Sexp.t Syntax.algebra =
   }
 ;;
 
-let print_program text =
+let show text =
   Ocaml_syntax.read ~path:"input.ml" text
   |> Or_error.ok_exn
   |> Syntax.fold algebra
@@ -31,8 +31,7 @@ let print_program text =
 let%expect_test "a function defines its body, where its parameters, patterns and \
                  decisions are"
   =
-  print_program
-    "let rec apply ~value = function Some (item as element) -> item | None -> value";
+  show "let rec apply ~value = function Some (item as element) -> item | None -> value";
   [%expect
     {|
     ((apply Function
@@ -41,8 +40,7 @@ let%expect_test "a function defines its body, where its parameters, patterns and
 ;;
 
 let%expect_test "types declare their constructors and fields in a scope of their own" =
-  print_program
-    "type shape = Circle of { radius : float } | Square\nlet%test_unit \"check\" = ()";
+  show "type shape = Circle of { radius : float } | Square\nlet%test_unit \"check\" = ()";
   [%expect
     {|
     ((shape Type) ((Circle Constructor) (radius Field) (Square Constructor))

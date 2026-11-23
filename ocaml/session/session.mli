@@ -9,7 +9,7 @@ type t
     Typing waits for the first {!shape_at}. *)
 val create : path:string -> string -> t Or_error.t
 
-val parsetree_of : t -> Merlin_kernel.Mreader.parsetree
+val syntax_tree_of : t -> Merlin_kernel.Mreader.parsetree
 val comments_of : t -> Source.Comment.t list
 val extent_of : Ocaml_parsing.Location.t -> Source.Extent.t
 

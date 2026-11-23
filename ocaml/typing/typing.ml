@@ -37,16 +37,18 @@ let is_constructor annotation spellings =
   | _, _ :: _ -> false
 ;;
 
+let is_boolean annotation = is_constructor annotation [ "bool"; "Bool.t" ]
+let is_fallible ~value ~error = is_boolean value && is_constructor error [ "Error.t" ]
+
 let codomain_of annotation =
   let result = result_of annotation in
-  let is_boolean value = is_constructor value [ "bool"; "Bool.t" ] in
   match constructor_of result with
   | ("bool" | "Bool.t"), [] -> Codomain.Boolean
   | ("unit" | "Unit.t"), [] -> Unit "unit"
   | ("option" | "Option.t"), [ value ] when is_boolean value -> Optional_boolean
   | "Or_error.t", [ value ] when is_boolean value -> Fallible_boolean
-  | ("result" | "Result.t"), [ value; error ]
-    when is_boolean value && is_constructor error [ "Error.t" ] -> Fallible_boolean
+  | ("result" | "Result.t"), [ value; error ] when is_fallible ~value ~error ->
+    Fallible_boolean
   | _ -> Other (Format.asprintf "%a" Pprintast.core_type result)
 ;;
 
@@ -61,20 +63,28 @@ let codomain_of_return = function
   | Pconstraint annotation | Pcoerce (_, annotation) -> lazy (codomain_of annotation)
 ;;
 
-let rec shape_of_expression expression =
+(* The expression whose value an expression gives, beneath a binding or a constraint
+   without a type. *)
+let tail_of expression =
   match expression.pexp_desc with
-  | Pexp_function (_, signature, _) ->
-    let returned = Option.map signature.ret_type_constraint ~f:codomain_of_return in
-    Shape.Function (Option.value returned ~default:unknown)
-  | Pexp_constraint (_, Some annotation, _) | Pexp_coerce (_, _, annotation) ->
+  | Pexp_constraint (tail, None, _)
+  | Pexp_newtype (_, _, tail)
+  | Pexp_let (_, _, _, tail)
+  | Pexp_letop { body = tail; _ }
+  | Pexp_open (_, tail)
+  | Pexp_sequence (_, tail) -> Some tail
+  | _ -> None
+;;
+
+let rec shape_of_expression expression =
+  match expression.pexp_desc, tail_of expression with
+  | Pexp_function (_, signature, _), _ ->
+    let return = signature.ret_type_constraint in
+    Shape.Function (Option.value_map return ~default:unknown ~f:codomain_of_return)
+  | (Pexp_constraint (_, Some annotation, _) | Pexp_coerce (_, _, annotation)), _ ->
     shape_of_annotation annotation
-  | Pexp_constraint (body, None, _)
-  | Pexp_newtype (_, _, body)
-  | Pexp_let (_, _, _, body)
-  | Pexp_letop { body; _ }
-  | Pexp_open (_, body)
-  | Pexp_sequence (_, body) -> shape_of_expression body
-  | _ -> Value unknown
+  | _, Some tail -> shape_of_expression tail
+  | _, None -> Value unknown
 ;;
 
 let prefer inference annotation =
@@ -84,11 +94,12 @@ let prefer inference annotation =
      | codomain -> codomain)
 ;;
 
-let merge ~inference ~annotation =
+let merge inference annotation =
   match inference, annotation with
-  | Some (Shape.Function inferred), Shape.Function written ->
-    Shape.Function (prefer inferred written)
-  | Some (Value inferred), Value written -> Value (prefer inferred written)
+  | Some (Shape.Function inferred_codomain), Shape.Function written_codomain ->
+    Shape.Function (prefer inferred_codomain written_codomain)
+  | Some (Value inferred_codomain), Value written_codomain ->
+    Value (prefer inferred_codomain written_codomain)
   | Some (Function _ as shape), Value _ -> shape
   | Some (Value _), (Function _ as shape) | None, shape -> shape
 ;;
@@ -98,7 +109,7 @@ let shape_at session ?extent annotation (name : string Location.loc) =
     List.find_map (name.loc :: Option.to_list extent) ~f:(fun location ->
       Session.shape_at session (Session.extent_of location))
   in
-  merge ~inference ~annotation
+  merge inference annotation
 ;;
 
 let role_of_value = function
@@ -132,9 +143,9 @@ let role_of_label session annotation name =
 ;;
 
 let role_of_method ?annotation ?extent session name =
-  let written =
+  let written_shape =
     Option.value_map annotation ~default:(Shape.Function unknown) ~f:shape_of_annotation
   in
-  match shape_at session ?extent written name with
+  match shape_at session ?extent written_shape name with
   | Value codomain | Function codomain -> Role.Function codomain
 ;;

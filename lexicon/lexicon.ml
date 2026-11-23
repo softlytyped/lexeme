@@ -38,26 +38,27 @@ let empty =
 ;;
 
 let inflect lexicon (plural, singular) =
-  let add_singular readings =
+  let with_singular readings =
     Set.add (Option.value readings ~default:String.Set.empty) singular
   in
   { lexicon with
     nouns = Set.add lexicon.nouns singular
-  ; singulars = Map.update lexicon.singulars plural ~f:add_singular
+  ; singulars = Map.update lexicon.singulars plural ~f:with_singular
+  }
+;;
+
+let with_words lexicon (vocabulary : Vocabulary.t) =
+  let unite words entries = Set.union words (String.Set.of_list entries) in
+  { lexicon with
+    nouns = unite lexicon.nouns vocabulary.nouns
+  ; verbs = unite lexicon.verbs vocabulary.verbs
+  ; adjectives = unite lexicon.adjectives vocabulary.adjectives
+  ; adverbs = unite lexicon.adverbs vocabulary.adverbs
   }
 ;;
 
 let add lexicon (vocabulary : Vocabulary.t) =
-  let union words entries = Set.union words (String.Set.of_list entries) in
-  let lexicon =
-    { lexicon with
-      nouns = union lexicon.nouns vocabulary.nouns
-    ; verbs = union lexicon.verbs vocabulary.verbs
-    ; adjectives = union lexicon.adjectives vocabulary.adjectives
-    ; adverbs = union lexicon.adverbs vocabulary.adverbs
-    }
-  in
-  List.fold vocabulary.plurals ~init:lexicon ~f:inflect
+  List.fold vocabulary.plurals ~init:(with_words lexicon vocabulary) ~f:inflect
 ;;
 
 (* Each line of the table is a part of speech followed by its word, or "plural" followed
@@ -93,37 +94,48 @@ let extend lexicon vocabulary =
 let is_verb lexicon = Set.mem lexicon.verbs
 let is_adverb lexicon = Set.mem lexicon.adverbs
 
-(* A verb also supplies adjectival participles. We undo each spelling change, as in
-   enabled, carried, dying and stopped, and look for an attested root verb. *)
-let roots_of_participle word =
-  let respell stem ~ending ~root_ending =
-    Option.map (String.chop_suffix stem ~suffix:ending) ~f:(fun root ->
-      root ^ root_ending)
-  in
-  let undouble stem =
-    match List.rev (String.to_list stem) with
-    | last :: before :: _ when Char.equal last before -> Some (String.drop_suffix stem 1)
-    | _ -> None
-  in
-  match String.chop_suffix word ~suffix:"ed", String.chop_suffix word ~suffix:"ing" with
-  | Some stem, _ ->
-    [ Some stem
-    ; Some (stem ^ "e")
-    ; respell stem ~ending:"i" ~root_ending:"y"
-    ; undouble stem
-    ]
-  | None, Some stem ->
-    [ Some stem
-    ; Some (stem ^ "e")
-    ; respell stem ~ending:"y" ~root_ending:"ie"
-    ; undouble stem
-    ]
-  | None, None -> []
+(* An inflection adds a suffix to its root, and may change the root's spelling. We undo
+   each change, as in enabled from enable, carried from carry, dying from die and largest
+   from large. *)
+type spelling_change =
+  { ending : string
+  ; root_ending : string
+  }
+
+let spelling_changes =
+  [ { ending = ""; root_ending = "" }
+  ; { ending = ""; root_ending = "e" }
+  ; { ending = "i"; root_ending = "y" }
+  ; { ending = "y"; root_ending = "ie" }
+  ]
 ;;
 
+(* A doubled final consonant undoubles, as in stopped, running and biggest. *)
+let root_of_doubling stem =
+  match List.rev (String.to_list stem) with
+  | last :: repeat :: _ when Char.equal last repeat -> Some (String.drop_suffix stem 1)
+  | _ -> None
+;;
+
+let root_of_change stem { ending; root_ending } =
+  Option.map (String.chop_suffix stem ~suffix:ending) ~f:(fun root -> root ^ root_ending)
+;;
+
+let roots_of word ~suffixes =
+  let stems =
+    List.filter_map suffixes ~f:(fun suffix -> String.chop_suffix word ~suffix)
+  in
+  List.concat_map stems ~f:(fun stem ->
+    Option.to_list (root_of_doubling stem)
+    @ List.filter_map spelling_changes ~f:(root_of_change stem))
+;;
+
+(* A verb supplies adjectival participles, and an adjective its comparative and
+   superlative. *)
 let is_adjective lexicon word =
   Set.mem lexicon.adjectives word
-  || List.exists (roots_of_participle word) ~f:(Option.exists ~f:(is_verb lexicon))
+  || List.exists (roots_of word ~suffixes:[ "ed"; "ing" ]) ~f:(is_verb lexicon)
+  || List.exists (roots_of word ~suffixes:[ "er"; "est" ]) ~f:(Set.mem lexicon.adjectives)
 ;;
 
 let is_vowel letter = String.mem "aeiou" letter

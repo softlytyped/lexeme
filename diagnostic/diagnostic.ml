@@ -41,9 +41,11 @@ module Rule = struct
       | Single_letter ->
         "use a longer name or add a lexeme: allow-letter comment with a reason"
       | Variable | Field | Type -> "expected a noun phrase"
-      | Function -> "expected a root verb phrase, a prepositional name or a predicate"
-      | Predicate -> "expected a predicate such as is_empty or has_entries for a Boolean"
-      | Command -> "expected a root verb phrase for a function that gives nothing"
+      | Function ->
+        "expected a verb phrase, a predicate or a noun phrase with a preposition"
+      | Predicate ->
+        "expected a predicate, such as is_empty or has_entries, for a Boolean"
+      | Command -> "expected a verb phrase for a command (command-query separation)"
       | Constructor -> "expected a noun phrase or an adjective phrase"
     ;;
   end
@@ -78,7 +80,7 @@ module Rule = struct
       | Optional -> question_of "Some false" "None"
       | Fallible -> question_of "Ok false" "Error"
       | Wrong spelling -> "expected a Boolean result, found " ^ spelling
-      | Unknown -> "could not determine the result type. Add a result annotation."
+      | Unknown -> "could not infer the result type: add a type annotation"
     ;;
   end
 
@@ -87,13 +89,13 @@ module Rule = struct
       | Boolean_match
       | Boolean_tuple of int
       | Lone_boolean_match
-      | Several_ifs of Source.Position.t list
+      | Several_conditionals of string
       | Late_guard
       | Nested_boolean
 
     let severity_of = function
       | Boolean_match | Late_guard -> Severity.Note
-      | Lone_boolean_match | Several_ifs _ | Nested_boolean -> Warning
+      | Lone_boolean_match | Several_conditionals _ | Nested_boolean -> Warning
       | Boolean_tuple _ -> Error
     ;;
 
@@ -101,32 +103,23 @@ module Rule = struct
       | Boolean_match -> "boolean-match"
       | Boolean_tuple _ -> "boolean-tuple"
       | Lone_boolean_match -> "lone-boolean-match"
-      | Several_ifs _ -> "if-else"
+      | Several_conditionals _ -> "if-else"
       | Late_guard -> "late-guard"
       | Nested_boolean -> "nested-boolean"
     ;;
 
-    let lines_of positions =
-      List.map positions ~f:(fun (position : Source.Position.t) ->
-        Int.to_string position.line)
-      |> String.concat ~sep:", "
-    ;;
+    let advice = "parse, don't validate, with a variant type"
 
     let message_of = function
-      | Boolean_match -> "could a variant name the cases of this Boolean?"
-      | Boolean_tuple count ->
-        sprintf "matches %d Booleans at once: parse, don't validate, with a variant" count
+      | Boolean_match -> "could a variant type name the cases of this Boolean?"
+      | Boolean_tuple count -> sprintf "matches %d Booleans at once: %s" count advice
       | Lone_boolean_match ->
-        "the one Boolean decision of its function reads as an if-else"
-      | Several_ifs positions ->
-        sprintf
-          "has if-else on lines %s: keep at most one, and match the rest"
-          (lines_of positions)
+        "the only Boolean condition of its function: use if-then-else"
+      | Several_conditionals lines ->
+        sprintf "if-then-else on lines %s: use pattern matching for all but one" lines
       | Late_guard ->
-        "this precondition uses none of the work before it: could it come first?"
-      | Nested_boolean ->
-        "a Boolean match within another Boolean decision: parse, don't validate, with a \
-         variant"
+        "a guard clause after work that it does not use: could it come first?"
+      | Nested_boolean -> "a nested conditional on Booleans: " ^ advice
     ;;
   end
 
@@ -157,17 +150,18 @@ module Rule = struct
     | Function_length _ -> "function-length"
   ;;
 
+  let lift_message_of (singular : Binding.t) =
+    let line = singular.site.position.line in
+    sprintf "check whether this maps %s over a collection (line %d)" singular.name line
+  ;;
+
   let message_of = function
     | Name name -> Name.message_of name
     | Answer answer -> Answer.message_of answer
     | Branch branch -> Branch.message_of branch
-    | Plural_lift (singular : Binding.t) ->
-      sprintf
-        "check whether this is a map-like lift of %s (line %d)"
-        singular.name
-        singular.site.position.line
+    | Plural_lift singular -> lift_message_of singular
     | Function_length { lines; bound; _ } ->
-      sprintf "%d lines of code, more than %d" lines bound
+      sprintf "%d source lines of code, more than %d" lines bound
   ;;
 end
 
@@ -185,6 +179,7 @@ let of_decision (decision : Decision.t) =
 ;;
 
 let severity_of diagnostic = Rule.severity_of diagnostic.rule
+let code_of diagnostic = Rule.code_of diagnostic.rule
 
 let to_string { site = { path; position = { line; column } }; subject; rule } =
   sprintf

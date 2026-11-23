@@ -4,7 +4,7 @@ open! Core
 
 module Form : sig
   type t =
-    | If
+    | Conditional (** [if], with or without [else] *)
     | Boolean_match (** a match on one Boolean *)
     | Tuple_match of int
     (** a match on a tuple, with the count of its Boolean components *)

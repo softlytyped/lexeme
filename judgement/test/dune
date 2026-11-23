@@ -1,6 +1,6 @@
 (library
  (name test_judgement)
- (libraries core diagnostic judgement lexicon ocaml_syntax syntax)
+ (libraries core diagnostic judgement lexicon ocaml_syntax source syntax)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

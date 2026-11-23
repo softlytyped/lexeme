@@ -1,25 +1,28 @@
 open! Core
 
+(* A scoped operation opens a lexical block or a function's body. *)
+module Scope = struct
+  type t =
+    | Block
+    | Function_body of Binding.t
+end
+
 module Program = struct
-  type _ t =
-    | Return : 'answer -> 'answer t
-    | Declare : Binding.t * 'answer t -> 'answer t
-    | Decide : Decision.t * 'answer t -> 'answer t
-    | Enclose : 'body t * ('body -> 'answer t) -> 'answer t
-    | Define : Binding.t * 'body t * ('body -> 'answer t) -> 'answer t
+  type 'answer t =
+    | Return of 'answer
+    | Declaration of Binding.t * 'answer t
+    | Decision of Decision.t * 'answer t
+    | Scope of Scope.t * unit t * 'answer t
 
   let return answer = Return answer
 
-  let rec bind : type answer result. answer t -> f:(answer -> result t) -> result t =
-    fun program ~f:continuation ->
-    let continue rest = bind rest ~f:continuation in
+  let rec bind program ~f:proceed =
+    let resume rest = bind rest ~f:proceed in
     match program with
-    | Return answer -> continuation answer
-    | Declare (binding, rest) -> Declare (binding, continue rest)
-    | Decide (decision, rest) -> Decide (decision, continue rest)
-    | Enclose (body, rest) -> Enclose (body, fun answer -> continue (rest answer))
-    | Define (binding, body, rest) ->
-      Define (binding, body, fun answer -> continue (rest answer))
+    | Return answer -> proceed answer
+    | Declaration (binding, rest) -> Declaration (binding, resume rest)
+    | Decision (decision, rest) -> Decision (decision, resume rest)
+    | Scope (scope, body, rest) -> Scope (scope, body, resume rest)
   ;;
 
   let map = `Define_using_bind
@@ -28,10 +31,10 @@ end
 include Program
 include Monad.Make (Program)
 
-let declare binding = Declare (binding, return ())
-let decide decision = Decide (decision, return ())
-let enclose body = Enclose (body, return)
-let define binding body = Define (binding, body, return)
+let declare binding = Declaration (binding, return ())
+let decide decision = Decision (decision, return ())
+let enclose body = Scope (Block, body, return ())
+let define binding body = Scope (Function_body binding, body, return ())
 
 module Recorder = struct
   (* The steps of the innermost scope so far, in reverse. The enclosing scopes' steps wait
@@ -42,24 +45,21 @@ module Recorder = struct
   let declare recorder binding = add recorder (declare binding)
   let decide recorder decision = add recorder (decide decision)
 
-  let enclose_with recorder ~enclosure traversal =
+  let nest recorder scope traverse =
     let outer_steps = recorder.steps in
     recorder.steps <- [];
-    traversal ();
+    traverse ();
     let body = all_unit (List.rev recorder.steps) in
-    recorder.steps <- enclosure body :: outer_steps
+    recorder.steps <- Scope (scope, body, return ()) :: outer_steps
   ;;
 
-  let enclose recorder traversal = enclose_with recorder ~enclosure:enclose traversal
-
-  let define recorder binding traversal =
-    enclose_with recorder ~enclosure:(define binding) traversal
-  ;;
+  let enclose recorder traverse = nest recorder Block traverse
+  let define recorder binding traverse = nest recorder (Function_body binding) traverse
 end
 
-let record traversal =
+let record traverse =
   let recorder = { Recorder.steps = [] } in
-  traversal recorder;
+  traverse recorder;
   all_unit (List.rev recorder.steps)
 ;;
 
@@ -70,44 +70,25 @@ type 'result algebra =
   ; define : Binding.t -> 'result list -> 'result
   }
 
-let scope_of algebra inner_children =
-  match inner_children with
-  | [] -> []
-  | _ :: _ -> [ algebra.enclose (List.rev inner_children) ]
+(* A block that holds nothing is left out. *)
+let close algebra (scope : Scope.t) inner_children =
+  match scope, inner_children with
+  | Block, [] -> []
+  | Block, _ :: _ -> [ algebra.enclose (List.rev inner_children) ]
+  | Function_body binding, _ -> [ algebra.define binding (List.rev inner_children) ]
 ;;
 
 (* We gather a scope's children in reverse. *)
-let rec children_of
-  : type answer result. result algebra -> answer t -> result list -> answer * result list
-  =
-  fun algebra program children ->
+let rec children_of algebra program children =
   match program with
-  | Return answer -> answer, children
-  | Declare (binding, rest) ->
+  | Return () -> children
+  | Declaration (binding, rest) ->
     children_of algebra rest (algebra.declare binding :: children)
-  | Decide (decision, rest) ->
+  | Decision (decision, rest) ->
     children_of algebra rest (algebra.decide decision :: children)
-  | Enclose (body, rest) ->
-    children_after algebra body rest children ~closing:(scope_of algebra)
-  | Define (binding, body, rest) ->
-    let closing inner_children = [ algebra.define binding (List.rev inner_children) ] in
-    children_after algebra body rest children ~closing
-
-and children_after
-  : type body answer result.
-    result algebra
-    -> body t
-    -> (body -> answer t)
-    -> result list
-    -> closing:(result list -> result list)
-    -> answer * result list
-  =
-  fun algebra body rest children ~closing ->
-  let answer, inner_children = children_of algebra body [] in
-  children_of algebra (rest answer) (closing inner_children @ children)
+  | Scope (scope, body, rest) ->
+    let inner_children = children_of algebra body [] in
+    children_of algebra rest (close algebra scope inner_children @ children)
 ;;
 
-let fold algebra program =
-  let (), children = children_of algebra program [] in
-  algebra.enclose (List.rev children)
-;;
+let fold algebra program = algebra.enclose (List.rev (children_of algebra program []))

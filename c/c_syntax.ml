@@ -9,56 +9,57 @@ let block_opening = "/*"
 let block_closing = "*/"
 
 let character_at text offset =
-  match offset < String.length text with
-  | true -> Some text.[offset]
-  | false -> None
+  if offset < String.length text then Some text.[offset] else None
 ;;
 
 let comment_of text ~start ~stop ~closing =
-  let body =
-    String.slice text (start + String.length block_opening) (stop - String.length closing)
-  in
-  { Source.Comment.extent = { start; stop }; body }
+  let body_start = start + String.length block_opening in
+  { Source.Comment.extent = { start; stop }
+  ; body = String.slice text body_start (stop - String.length closing)
+  }
 ;;
 
-let rec scan_code text offset comments =
-  let is_at opening = String.is_substring_at text ~pos:offset ~substring:opening in
+let rec comments_in_code text offset comments =
+  let does_open opening = String.is_substring_at text ~pos:offset ~substring:opening in
   match character_at text offset with
   | None -> List.rev comments
-  | Some '/' when is_at line_opening ->
-    scan_line_comment text ~start:offset (offset + String.length line_opening) comments
-  | Some '/' when is_at block_opening ->
-    scan_block_comment text ~start:offset (offset + String.length block_opening) comments
-  | Some (('"' | '\'') as quote) -> scan_quotation text ~quote (offset + 1) comments
-  | Some _ -> scan_code text (offset + 1) comments
+  | Some '/' when does_open line_opening ->
+    comments_in_line text ~start:offset (offset + String.length line_opening) comments
+  | Some '/' when does_open block_opening ->
+    comments_in_block text ~start:offset (offset + String.length block_opening) comments
+  | Some (('"' | '\'') as quote) -> comments_in_quote text ~quote (offset + 1) comments
+  | Some _ -> comments_in_code text (offset + 1) comments
 
-and scan_quotation text ~quote offset comments =
+and comments_in_quote text ~quote offset comments =
   match character_at text offset with
   | None -> List.rev comments
-  | Some '\\' -> scan_escape text ~quote (offset + 1) comments
+  | Some '\\' -> comments_in_escape text ~quote (offset + 1) comments
   | Some letter when Char.equal letter quote || Char.equal letter '\n' ->
-    scan_code text (offset + 1) comments
-  | Some _ -> scan_quotation text ~quote (offset + 1) comments
+    comments_in_code text (offset + 1) comments
+  | Some _ -> comments_in_quote text ~quote (offset + 1) comments
 
-and scan_escape text ~quote offset comments =
-  scan_quotation text ~quote (offset + 1) comments
+and comments_in_escape text ~quote offset comments =
+  comments_in_quote text ~quote (offset + 1) comments
 
 (* A backslash at the end of a line continues a line comment onto the next. *)
-and scan_line_comment text ~start offset comments =
+and comments_in_line text ~start offset comments =
   let close () = comment_of text ~start ~stop:offset ~closing:"" :: comments in
   match character_at text offset with
   | None -> List.rev (close ())
   | Some '\n' when not (Char.equal text.[offset - 1] '\\') ->
-    scan_code text offset (close ())
-  | Some _ -> scan_line_comment text ~start (offset + 1) comments
+    comments_in_code text offset (close ())
+  | Some _ -> comments_in_line text ~start (offset + 1) comments
 
-and scan_block_comment text ~start offset comments =
-  let stop = offset + String.length block_closing in
+and comments_in_block text ~start offset comments =
   match character_at text offset with
   | None -> List.rev (comment_of text ~start ~stop:offset ~closing:"" :: comments)
   | Some '*' when String.is_substring_at text ~pos:offset ~substring:block_closing ->
-    scan_code text stop (comment_of text ~start ~stop ~closing:block_closing :: comments)
-  | Some _ -> scan_block_comment text ~start (offset + 1) comments
+    let stop = offset + String.length block_closing in
+    comments_in_code
+      text
+      stop
+      (comment_of text ~start ~stop ~closing:block_closing :: comments)
+  | Some _ -> comments_in_block text ~start (offset + 1) comments
 ;;
 
 (* Clang's declaration tree is JSON. *)
@@ -120,10 +121,10 @@ let alias_after aliases node =
   | _ -> aliases
 ;;
 
-let rec expand aliases ~visited spelling =
+let rec expand aliases ~expansions spelling =
   match Map.find aliases spelling with
-  | Some target when not (Set.mem visited spelling) ->
-    expand aliases ~visited:(Set.add visited spelling) target
+  | Some target when not (Set.mem expansions spelling) ->
+    expand aliases ~expansions:(Set.add expansions spelling) target
   | _ -> spelling
 ;;
 
@@ -146,7 +147,8 @@ let codomain_of aliases declaration =
   | Some spelling ->
     (match String.lsplit2 spelling ~on:'(' with
      | Some (result, parameters) when not (String.is_prefix parameters ~prefix:"*") ->
-       codomain_of_result (expand aliases ~visited:String.Set.empty (String.strip result))
+       codomain_of_result
+         (expand aliases ~expansions:String.Set.empty (String.strip result))
      | Some _ | None -> Other spelling)
 ;;
 
@@ -180,11 +182,26 @@ let function_of source aliases node ~body =
 
 let field_of_node aliases node =
   let expand spelling =
-    expand aliases ~visited:String.Set.empty (String.strip spelling)
+    expand aliases ~expansions:String.Set.empty (String.strip spelling)
   in
   let codomain_of spelling = codomain_of_result (expand spelling) in
   Binding.Role.Field
     (lazy (Option.value_map (spelling_of node) ~default:Codomain.Unknown ~f:codomain_of))
+;;
+
+(* Enumeration constants share the enclosing scope, and a structure's fields do not. *)
+let is_block = function
+  | "CompoundStmt" | "ForStmt" | "RecordDecl" -> true
+  | _ -> false
+;;
+
+let role_of aliases node kind =
+  match kind with
+  | "ParmVarDecl" | "VarDecl" -> Some Binding.Role.Variable
+  | "FieldDecl" -> Some (field_of_node aliases node)
+  | "EnumConstantDecl" -> Some Constructor
+  | "TypedefDecl" | "EnumDecl" | "RecordDecl" -> Some Type
+  | _ -> None
 ;;
 
 let rec visit_all source aliases nodes =
@@ -197,20 +214,15 @@ let rec visit_all source aliases nodes =
 and visit source aliases node =
   if is_spelled_here node then dispatch source aliases node else return ()
 
-(* Enumeration constants share the enclosing scope, and a structure's fields do not. *)
+(* A declaration declares its name before its body, and a block encloses its body. *)
 and dispatch source aliases node =
+  let kind = Option.value (text_of node "kind") ~default:"" in
   let descend () = visit_all source aliases (children_of node) in
-  let declare role = declaration_of source node role >>= descend in
-  match text_of node "kind" with
-  | Some "FunctionDecl" -> function_of source aliases node ~body:(descend ())
-  | Some ("ParmVarDecl" | "VarDecl") -> declare Variable
-  | Some "FieldDecl" -> declare (field_of_node aliases node)
-  | Some "EnumConstantDecl" -> declare Constructor
-  | Some ("TypedefDecl" | "EnumDecl") -> declare Type
-  | Some "RecordDecl" ->
-    declaration_of source node Type >>= fun () -> Syntax.enclose (descend ())
-  | Some ("CompoundStmt" | "ForStmt") -> Syntax.enclose (descend ())
-  | _ -> descend ()
+  let body = if is_block kind then Syntax.enclose (descend ()) else descend () in
+  match kind, role_of aliases node kind with
+  | "FunctionDecl", _ -> function_of source aliases node ~body
+  | _, Some role -> declaration_of source node role >>= fun () -> body
+  | _, None -> body
 ;;
 
 let arguments_of ~path ~directories ~definitions =
@@ -232,6 +244,6 @@ let read ~path ~directories ~definitions text =
     Or_error.try_with (fun () -> Yojson.Safe.from_string output)
     |> Or_error.tag ~tag:"expected Clang's declaration tree"
   in
-  let source = Source.create ~path ~comments:(scan_code text 0 []) text in
+  let source = Source.create ~path ~comments:(comments_in_code text 0 []) text in
   visit source String.Map.empty tree
 ;;

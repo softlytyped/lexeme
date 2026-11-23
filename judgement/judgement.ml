@@ -31,13 +31,15 @@ module Limits = struct
 
   let default = { note = 10; warning = 20; error = 30; test_allowance = 5 }
 
+  let allowance_of limits (role : Binding.Role.t) =
+    match role with
+    | Test -> limits.test_allowance
+    | Variable | Function _ | Field _ | Type | Constructor -> 0
+  ;;
+
   (* The bounds past which a definition earns each severity, the most severe first. *)
-  let bounds_of limits (role : Binding.Role.t) =
-    let allowance =
-      match role with
-      | Test -> limits.test_allowance
-      | Variable | Function _ | Field _ | Type | Constructor -> 0
-    in
+  let bounds_of limits role =
+    let allowance = allowance_of limits role in
     [ Diagnostic.Severity.Error, limits.error
     ; Warning, limits.warning
     ; Note, limits.note
@@ -83,7 +85,7 @@ let answer_rules_of codomain =
 
 (* A function's name says what it gives: a predicate for a Boolean, a verb for nothing,
    and otherwise a verb or a name for what it returns. *)
-let function_statement_rules_of readings codomain =
+let rules_of_function readings codomain =
   match codomain with
   | Codomain.Boolean -> [ Rule.Name Predicate ]
   | Unit _ -> expect readings [ Verb_phrase ] Command
@@ -91,7 +93,7 @@ let function_statement_rules_of readings codomain =
     expect readings [ Verb_phrase; Nominal ] Function
 ;;
 
-let field_statement_rules_of readings codomain =
+let rules_of_field readings codomain =
   match codomain with
   | Codomain.Boolean -> [ Rule.Name Predicate ]
   | Optional_boolean | Fallible_boolean | Unit _ | Other _ | Unknown ->
@@ -99,27 +101,17 @@ let field_statement_rules_of readings codomain =
 ;;
 
 (* A question asks for a Boolean, so its rules concern what it gives. *)
-let typed_rules_of name readings codomain ~statement_rules =
+let typed_rules_of name readings codomain ~judge =
   match Grammar.Name.form_of name with
-  | Question -> expect readings [ Predicate ] Function @ answer_rules_of codomain
-  | Statement -> statement_rules readings codomain
+  | Question -> expect readings [ Predicate ] Function @ answer_rules_of (force codomain)
+  | Statement -> judge readings (force codomain)
 ;;
 
 let phrase_rules_of (binding : Binding.t) name readings =
   match binding.role with
   | Variable -> expect readings [ Noun_phrase ] Variable
-  | Function codomain ->
-    typed_rules_of
-      name
-      readings
-      (force codomain)
-      ~statement_rules:function_statement_rules_of
-  | Field codomain ->
-    typed_rules_of
-      name
-      readings
-      (force codomain)
-      ~statement_rules:field_statement_rules_of
+  | Function codomain -> typed_rules_of name readings codomain ~judge:rules_of_function
+  | Field codomain -> typed_rules_of name readings codomain ~judge:rules_of_field
   | Type -> expect readings [ Noun_phrase ] Type
   | Constructor -> expect readings [ Noun_phrase; Adjective_phrase ] Constructor
   | Test -> []
@@ -154,14 +146,13 @@ let name_rules_of context (binding : Binding.t) name readings =
 ;;
 
 let length_rules_of limits (binding : Binding.t) =
-  match binding.lines with
-  | None -> []
-  | Some lines ->
+  let rule_of lines =
     Limits.bounds_of limits binding.role
     |> List.find ~f:(fun (_, bound) -> lines > bound)
-    |> Option.to_list
-    |> List.map ~f:(fun (severity, bound) ->
+    |> Option.map ~f:(fun (severity, bound) ->
       Rule.Function_length { lines; bound; severity })
+  in
+  Option.to_list (Option.bind binding.lines ~f:rule_of)
 ;;
 
 let singulars_of grammar (binding : Binding.t) name readings =
@@ -183,38 +174,43 @@ let declaration_of context (binding : Binding.t) =
   }
 ;;
 
-let decision_rules_of (decision : Decision.t) =
-  let placement_rules =
-    match decision.placement, decision.nesting with
-    | Late, Nested -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
-    | Late, Outermost -> [ Rule.Branch Late_guard ]
-    | Settled, Nested -> [ Rule.Branch Nested_boolean ]
-    | Settled, Outermost -> []
-  in
-  match decision.form with
-  | Boolean_match | Tuple_match 1 -> Rule.Branch Boolean_match :: placement_rules
-  | Tuple_match count when count > 1 -> Branch (Boolean_tuple count) :: placement_rules
-  | If | Tuple_match _ | Other_match -> placement_rules
+let form_rules_of = function
+  | Decision.Form.Boolean_match | Tuple_match 1 -> [ Rule.Branch Boolean_match ]
+  | Tuple_match count when count > 1 -> [ Branch (Boolean_tuple count) ]
+  | Conditional | Tuple_match _ | Other_match -> []
 ;;
 
-let decide decision =
-  let findings =
-    List.map (decision_rules_of decision) ~f:(Diagnostic.of_decision decision)
-  in
+let placement_rules_of (decision : Decision.t) =
+  match decision.placement, decision.nesting with
+  | Late, Nested -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
+  | Late, Outermost -> [ Rule.Branch Late_guard ]
+  | Settled, Nested -> [ Rule.Branch Nested_boolean ]
+  | Settled, Outermost -> []
+;;
+
+let decide (decision : Decision.t) =
+  let rules = form_rules_of decision.form @ placement_rules_of decision in
+  let findings = List.map rules ~f:(Diagnostic.of_decision decision) in
   Scope { findings; decisions = [ decision ] }
 ;;
 
-let several_ifs_of (binding : Binding.t) (ifs : Decision.t list) =
-  match ifs with
-  | [] | [ _ ] -> []
-  | _ :: _ :: _ ->
-    let positions = List.map ifs ~f:(fun decision -> decision.site.position) in
-    [ Diagnostic.of_binding binding (Branch (Several_ifs positions)) ]
+let lines_of (decisions : Decision.t list) =
+  List.map decisions ~f:(fun decision -> Int.to_string decision.site.position.line)
+  |> String.concat ~sep:", "
 ;;
 
-let lone_matches_of ifs boolean_matches =
-  match ifs, boolean_matches with
-  | [], [ lone ] -> [ Diagnostic.of_decision lone (Branch Lone_boolean_match) ]
+let several_conditionals_of binding conditionals =
+  match conditionals with
+  | [] | [ _ ] -> []
+  | _ :: _ :: _ ->
+    let rule = Rule.Branch (Several_conditionals (lines_of conditionals)) in
+    [ Diagnostic.of_binding binding rule ]
+;;
+
+let lone_matches_of conditionals boolean_matches =
+  match conditionals, boolean_matches with
+  | [], [ lone_match ] ->
+    [ Diagnostic.of_decision lone_match (Branch Lone_boolean_match) ]
   | _ -> []
 ;;
 
@@ -223,8 +219,9 @@ let body_rules_of binding (decisions : Decision.t list) =
   let of_form form =
     List.filter decisions ~f:(fun decision -> Decision.Form.equal decision.form form)
   in
-  several_ifs_of binding (of_form If)
-  @ lone_matches_of (of_form If) (of_form Boolean_match)
+  let conditionals = of_form Conditional in
+  several_conditionals_of binding conditionals
+  @ lone_matches_of conditionals (of_form Boolean_match)
 ;;
 
 let with_declaration declarations (binding : Binding.t) =
@@ -252,18 +249,18 @@ let lift_notes_of declarations binding singulars =
 let findings_in declarations = function
   | Scope { findings; _ } -> declarations, findings
   | Declaration { binding; singulars; diagnostics } ->
-    ( with_declaration declarations binding
-    , diagnostics @ lift_notes_of declarations binding singulars )
+    let notes = lift_notes_of declarations binding singulars in
+    with_declaration declarations binding, diagnostics @ notes
+;;
+
+let decisions_in = function
+  | Declaration _ -> []
+  | Scope { decisions; _ } -> decisions
 ;;
 
 let scope_of children =
-  let decisions_in = function
-    | Declaration _ -> []
-    | Scope { decisions; _ } -> decisions
-  in
-  let findings =
-    List.folding_map children ~init:(first_declarations_of children) ~f:findings_in
-  in
+  let declarations = first_declarations_of children in
+  let findings = List.folding_map children ~init:declarations ~f:findings_in in
   { findings = List.concat findings
   ; decisions = List.concat_map children ~f:decisions_in
   }
@@ -273,10 +270,8 @@ let define context binding children =
   let declaration = declaration_of context binding in
   let body = scope_of children in
   let body_rules = body_rules_of binding body.decisions in
-  Declaration
-    { declaration with
-      diagnostics = List.concat [ declaration.diagnostics; body_rules; body.findings ]
-    }
+  let diagnostics = List.concat [ declaration.diagnostics; body_rules; body.findings ] in
+  Declaration { declaration with diagnostics }
 ;;
 
 let algebra_of lexicon ~limits ~exemptions =

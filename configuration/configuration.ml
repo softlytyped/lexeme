@@ -11,32 +11,32 @@ type t =
 
 let file_name = ".lexeme"
 
-let rec nearest_in directory =
+let rec nearest_file_from directory =
   let candidate = directory ^/ file_name in
   let parent = Filename.dirname directory in
   match Sys_unix.file_exists candidate with
   | `Yes -> Some candidate
   | (`No | `Unknown) when String.equal parent directory -> None
-  | `No | `Unknown -> nearest_in parent
+  | `No | `Unknown -> nearest_file_from parent
 ;;
 
-let resolve_directories configuration ~path =
-  let resolve directory =
-    match Filename.is_relative directory with
-    | true -> Filename.dirname path ^/ directory
-    | false -> directory
+let resolve configuration ~path =
+  let location_of directory =
+    if Filename.is_relative directory
+    then Filename.dirname path ^/ directory
+    else directory
   in
-  { configuration with directories = List.map configuration.directories ~f:resolve }
+  { configuration with directories = List.map configuration.directories ~f:location_of }
 ;;
 
 let read path =
   Or_error.try_with (fun () -> t_of_sexp (Sexp.load_sexp path))
   |> Or_error.tag ~tag:("expected a Lexeme configuration in " ^ path)
-  |> Or_error.map ~f:(resolve_directories ~path)
+  |> Or_error.map ~f:(resolve ~path)
 ;;
 
 let load ?path () =
-  match Option.first_some path (nearest_in (Sys_unix.getcwd ())) with
+  match Option.first_some path (nearest_file_from (Sys_unix.getcwd ())) with
   | Some path -> read path
   | None -> Ok (t_of_sexp (Sexp.List []))
 ;;

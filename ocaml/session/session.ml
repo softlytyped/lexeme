@@ -14,10 +14,10 @@ module Shape = struct
     | Value result | Function result -> result
   ;;
 
-  let map shape ~f:transformation =
+  let map shape ~f:transform =
     match shape with
-    | Value result -> Value (transformation result)
-    | Function result -> Function (transformation result)
+    | Value result -> Value (transform result)
+    | Function result -> Function (transform result)
   ;;
 
   let rec of_type environment description =
@@ -31,7 +31,7 @@ end
 
 type t =
   { pipeline : Mpipeline.t
-  ; parsetree : Mreader.parsetree
+  ; syntax_tree : Mreader.parsetree
   ; comments : Source.Comment.t list
   ; shapes : Codomain.t Lazy.t Shape.t Source.Extent.Map.t Or_error.t Lazy.t
   }
@@ -78,15 +78,12 @@ let codomain_of environment description ~errors =
   match List.find (expectations_in environment) ~f:is_expected with
   | Some (_, codomain) -> codomain
   | None ->
-    (match is_undetermined environment description ~errors with
-     | true -> Unknown
-     | false -> Other (spelling_of environment description))
+    if is_undetermined environment description ~errors
+    then Unknown
+    else Other (spelling_of environment description)
 ;;
 
-let declaration_of = function
-  | Node.Pattern pattern -> Some (pattern.pat_loc, pattern.pat_type)
-  | Node.Value_description value -> Some (value.val_name.loc, value.val_desc.ctyp_type)
-  | Node.Label_declaration label -> Some (label.ld_name.loc, label.ld_type.ctyp_type)
+let method_of = function
   | Node.Class_field { cf_desc = Tcf_method (name, _, Tcfk_concrete (_, body)); _ } ->
     Some (name.loc, body.exp_type)
   | Node.Class_field { cf_desc = Tcf_method (name, _, Tcfk_virtual annotation); _ } ->
@@ -97,9 +94,16 @@ let declaration_of = function
   | _ -> None
 ;;
 
+let declaration_of = function
+  | Node.Pattern pattern -> Some (pattern.pat_loc, pattern.pat_type)
+  | Node.Value_description value -> Some (value.val_name.loc, value.val_desc.ctyp_type)
+  | Node.Label_declaration label -> Some (label.ld_name.loc, label.ld_type.ctyp_type)
+  | node -> method_of node
+;;
+
 (* The caller may judge a binding after another file has been read, so the codomain
    restores the compiler environment that owns its types. *)
-let shape_of pipeline environment description ~errors =
+let shape_in pipeline environment description ~errors =
   Shape.map (Shape.of_type environment description) ~f:(fun result ->
     lazy
       (Mpipeline.with_pipeline pipeline (fun () -> codomain_of environment result ~errors)))
@@ -112,18 +116,20 @@ let root_of typing =
 ;;
 
 (* Where the source does not type, we leave an undetermined type to the written syntax. *)
+let with_shape pipeline environment ~errors shapes (location, description) =
+  if is_undetermined environment description ~errors
+  then shapes
+  else (
+    let shape = shape_in pipeline environment description ~errors in
+    Map.set shapes ~key:(extent_of location) ~data:shape)
+;;
+
 let index_of pipeline typing =
   let errors = lazy (not (List.is_empty (Mtyper.get_errors typing))) in
   let rec visit environment node shapes =
     let environment = Node.node_update_env environment node in
-    let add_shape (location, description) =
-      if is_undetermined environment description ~errors
-      then shapes
-      else (
-        let shape = shape_of pipeline environment description ~errors in
-        Map.set shapes ~key:(extent_of location) ~data:shape)
-    in
-    let shapes = Option.value_map (declaration_of node) ~default:shapes ~f:add_shape in
+    let add = with_shape pipeline environment ~errors in
+    let shapes = Option.fold (declaration_of node) ~init:shapes ~f:add in
     Node.fold_node visit environment node shapes
   in
   visit (Mtyper.initial_env typing) (root_of typing) Source.Extent.Map.empty
@@ -148,23 +154,24 @@ let pipeline_of ~path text =
   Mpipeline.make configuration (Msource.make text)
 ;;
 
-let verify_parse pipeline =
+let parse pipeline =
   match
     Mpipeline.reader_lexer_errors pipeline @ Mpipeline.reader_parser_errors pipeline
   with
-  | [] -> Ok ()
+  | [] -> Ok (Mpipeline.reader_parsetree pipeline)
   | errors ->
     List.map errors ~f:(Format.asprintf "%a" Ocaml_parsing.Location.report_exception)
     |> String.concat ~sep:"\n"
     |> Or_error.error_string
 ;;
 
-let comment_of (body, location) = { Source.Comment.extent = extent_of location; body }
-
 let session_of pipeline ~path =
-  let%map.Or_error () = verify_parse pipeline in
+  let comment_of (body, location) =
+    { Source.Comment.extent = extent_of location; body }
+  in
+  let%map.Or_error syntax_tree = parse pipeline in
   { pipeline
-  ; parsetree = Mpipeline.reader_parsetree pipeline
+  ; syntax_tree
   ; comments = List.map (Mpipeline.reader_comments pipeline) ~f:comment_of
   ; shapes = lazy (shapes_of pipeline ~path)
   }
@@ -176,7 +183,7 @@ let create ~path text =
     Mpipeline.with_pipeline pipeline (fun () -> session_of pipeline ~path))
 ;;
 
-let parsetree_of session = session.parsetree
+let syntax_tree_of session = session.syntax_tree
 let comments_of session = session.comments
 
 let shape_at session extent =

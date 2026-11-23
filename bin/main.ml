@@ -14,45 +14,64 @@ module Outcome = struct
   ;;
 end
 
-let paths_in directory =
-  let patterns = [ "*.ml"; "*.mli"; "*.c"; "*.h" ] in
+type flags =
+  { configuration_path : string option
+  ; directories : string list
+  ; definitions : string list
+  }
+
+(* Git lists the tracked files and the untracked files that it does not ignore, relative
+   to the directory. A tracked file may since have been deleted. *)
+let listing_of directory =
   let arguments = [ "-C"; directory; "ls-files"; "-z"; "--cached"; "--others" ] in
-  let%map.Or_error output =
-    Process.run "git" (arguments @ [ "--exclude-standard"; "--" ] @ patterns)
-  in
-  let locate path =
-    match directory with
-    | "." -> path
-    | _ -> directory ^/ path
-  in
-  String.split output ~on:'\000'
-  |> List.filter_map ~f:(fun path ->
-    Option.some_if (not (String.is_empty path)) (locate path))
-  |> List.filter ~f:Sys_unix.file_exists_exn
+  Process.run
+    "git"
+    (arguments @ [ "--exclude-standard"; "--"; "*.ml"; "*.mli"; "*.c"; "*.h" ])
+;;
+
+let location_of directory path =
+  if String.equal directory "." then path else directory ^/ path
+;;
+
+let is_deleted path =
+  match Sys_unix.file_exists path with
+  | `No -> true
+  | `Yes | `Unknown -> false
+;;
+
+let paths_in directory =
+  let%map.Or_error listing = listing_of directory in
+  String.split listing ~on:'\000'
+  |> List.filter ~f:(Fn.non String.is_empty)
+  |> List.map ~f:(location_of directory)
+  |> List.filter ~f:(Fn.non is_deleted)
+;;
+
+let paths_at path =
+  match Sys_unix.is_directory path with
+  | `Yes -> paths_in path
+  | `No | `Unknown -> Ok [ path ]
 ;;
 
 let files_of paths =
-  let paths_at path =
-    match Sys_unix.is_directory path with
-    | `Yes -> paths_in path
-    | `No | `Unknown -> Ok [ path ]
-  in
-  let paths =
-    match paths with
-    | [] -> [ "." ]
-    | _ :: _ -> paths
-  in
+  let paths = if List.is_empty paths then [ "." ] else paths in
   let%map.Or_error groups = Or_error.combine_errors (List.map paths ~f:paths_at) in
-  List.concat groups |> List.dedup_and_sort ~compare:String.compare
+  List.dedup_and_sort (List.concat groups) ~compare:String.compare
 ;;
 
-let program_of (configuration : Configuration.t) path =
+let reader_of (configuration : Configuration.t) path =
   let { Configuration.directories; definitions; _ } = configuration in
-  let%bind.Or_error text = Or_error.try_with (fun () -> In_channel.read_all path) in
   match snd (Filename.split_extension path) with
-  | Some ("ml" | "mli") -> Ocaml_syntax.read ~path text
-  | Some ("c" | "h") -> C_syntax.read ~path ~directories ~definitions text
+  | Some ("ml" | "mli") -> Ok (Ocaml_syntax.read ~path)
+  | Some ("c" | "h") -> Ok (C_syntax.read ~path ~directories ~definitions)
   | _ -> Or_error.error_s [%message "expected an OCaml or C source file" path]
+;;
+
+let program_of configuration path =
+  let open Or_error.Let_syntax in
+  let%bind read = reader_of configuration path in
+  let%bind text = Or_error.try_with (fun () -> In_channel.read_all path) in
+  read text
 ;;
 
 let check configuration algebra path =
@@ -66,9 +85,7 @@ let outcome_of diagnostics =
   let is_error diagnostic =
     Diagnostic.Severity.equal (Diagnostic.severity_of diagnostic) Error
   in
-  match List.exists diagnostics ~f:is_error with
-  | true -> Outcome.Rejected
-  | false -> Accepted
+  if List.exists diagnostics ~f:is_error then Outcome.Rejected else Accepted
 ;;
 
 let report results =
@@ -83,37 +100,38 @@ let report results =
     Failed
 ;;
 
-let settings_of ~configuration_path ~directories ~definitions =
-  let open Or_error.Let_syntax in
-  let%bind configuration = Configuration.load ?path:configuration_path () in
-  let%map lexicon = Lexicon.extend (force Lexicon.english) configuration.vocabulary in
-  let configuration =
-    { configuration with
-      directories = configuration.directories @ directories
-    ; definitions = configuration.definitions @ definitions
-    }
-  in
-  let exemptions = String.Set.of_list configuration.exemptions in
-  ( configuration
-  , Judgement.algebra_of lexicon ~limits:configuration.function_lines ~exemptions )
+let with_flags (configuration : Configuration.t) flags =
+  { configuration with
+    directories = configuration.directories @ flags.directories
+  ; definitions = configuration.definitions @ flags.definitions
+  }
 ;;
 
-let run ~configuration_path ~directories ~definitions paths =
-  let checks =
-    let%bind.Or_error configuration, algebra =
-      settings_of ~configuration_path ~directories ~definitions
-    in
-    let%map.Or_error files = files_of paths in
-    List.map files ~f:(check configuration algebra)
-  in
-  match checks with
+let settings_of flags =
+  let open Or_error.Let_syntax in
+  let%bind configuration = Configuration.load ?path:flags.configuration_path () in
+  let%map lexicon = Lexicon.extend (force Lexicon.english) configuration.vocabulary in
+  let limits = configuration.function_lines in
+  let exemptions = String.Set.of_list configuration.exemptions in
+  with_flags configuration flags, Judgement.algebra_of lexicon ~limits ~exemptions
+;;
+
+let checks_of flags paths =
+  let open Or_error.Let_syntax in
+  let%bind configuration, algebra = settings_of flags in
+  let%map files = files_of paths in
+  List.map files ~f:(check configuration algebra)
+;;
+
+let run flags paths =
+  match checks_of flags paths with
   | Ok results -> report results
   | Error error -> report [ Error error ]
 ;;
 
 let command =
   Command.basic
-    ~summary:"Check the names and the function lengths of OCaml and C sources"
+    ~summary:"Check the names, types, branches and lengths of OCaml and C definitions"
     (let%map_open.Command configuration_path =
        flag
          "-config"
@@ -123,8 +141,8 @@ let command =
      and definitions =
        flag "-D" (listed string) ~doc:"MACRO define a C preprocessor macro"
      and paths = anon (sequence ("FILE-OR-DIRECTORY" %: string)) in
-     fun () ->
-       exit (Outcome.status_of (run ~configuration_path ~directories ~definitions paths)))
+     let flags = { configuration_path; directories; definitions } in
+     fun () -> exit (Outcome.status_of (run flags paths)))
 ;;
 
 let () = Command_unix.run command
