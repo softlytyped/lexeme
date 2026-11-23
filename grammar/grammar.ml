@@ -1,7 +1,7 @@
 open! Core
 
 (* A regular expression over whole words. A word can satisfy several parts of speech. At a
-   repetition we visit each suffix once, even if it has several readings. *)
+   repetition we visit each position once, even where its words have several readings. *)
 module Phrase = struct
   type t =
     | Word of (string -> bool)
@@ -9,178 +9,266 @@ module Phrase = struct
     | Choice of t list
     | Many of t
 
-  let rec accept phrase words position finish =
+  let rec does_accept phrase words position ~continuation =
     match phrase with
     | Word reading ->
-      position < Array.length words && reading words.(position) && finish (position + 1)
+      position < Array.length words
+      && reading words.(position)
+      && continuation (position + 1)
     | Choice phrases ->
-      List.exists phrases ~f:(fun phrase -> accept phrase words position finish)
-    | Sequence phrases ->
-      let dispatch =
-        List.fold_right phrases ~init:finish ~f:(fun phrase rest position ->
-          accept phrase words position rest)
-      in
-      dispatch position
-    | Many phrase ->
-      let positions = Hash_set.create (module Int) in
-      let rec repeat position =
-        match Hash_set.mem positions position with
-        | true -> false
-        | false ->
-          Hash_set.add positions position;
-          finish position || accept phrase words position repeat
-      in
-      repeat position
+      List.exists phrases ~f:(fun phrase ->
+        does_accept phrase words position ~continuation)
+    | Sequence phrases -> does_accept_in_turn phrases words position ~continuation
+    | Many phrase -> does_accept_repeatedly phrase words position ~continuation
+
+  and does_accept_in_turn phrases words position ~continuation =
+    match phrases with
+    | [] -> continuation position
+    | phrase :: rest ->
+      does_accept phrase words position ~continuation:(fun position ->
+        does_accept_in_turn rest words position ~continuation)
+
+  and does_accept_repeatedly phrase words position ~continuation =
+    let visited = Hash_set.create (module Int) in
+    let rec does_continue position =
+      match Hash_set.strict_add visited position with
+      | Duplicate -> false
+      | Ok ->
+        continuation position
+        || does_accept phrase words position ~continuation:does_continue
+    in
+    does_continue position
   ;;
 
   let does_match phrase words =
     let words = Array.of_list_map words ~f:String.lowercase in
-    accept phrase words 0 (Int.equal (Array.length words))
+    does_accept phrase words 0 ~continuation:(Int.equal (Array.length words))
   ;;
 
   let chain phrase separator = Sequence [ phrase; Many (Sequence [ separator; phrase ]) ]
 end
 
 let prepositions =
-  String.split
-    "of at from to in on by for with without as into onto per over under between through \
-     before after among within across along beside above below against"
-    ~on:' '
-  |> String.Set.of_list
+  String.Set.of_list
+    [ "of"
+    ; "at"
+    ; "from"
+    ; "to"
+    ; "in"
+    ; "on"
+    ; "by"
+    ; "for"
+    ; "with"
+    ; "without"
+    ; "as"
+    ; "into"
+    ; "onto"
+    ; "per"
+    ; "over"
+    ; "under"
+    ; "between"
+    ; "through"
+    ; "before"
+    ; "after"
+    ; "among"
+    ; "within"
+    ; "across"
+    ; "along"
+    ; "beside"
+    ; "above"
+    ; "below"
+    ; "against"
+    ]
 ;;
 
 let is_preposition word = Set.mem prepositions (String.lowercase word)
 
-let is_conjunction = function
+let is_conjunction word =
+  match String.lowercase word with
   | "and" | "or" | "but" -> true
   | _ -> false
 ;;
 
+module Auxiliary = struct
+  type t =
+    | Copula
+    | Possession
+    | Modal
+
+  let of_word word =
+    match String.lowercase word with
+    | "is" | "are" -> Some Copula
+    | "has" | "have" -> Some Possession
+    | "does" | "do" | "can" | "may" | "must" | "should" | "will" -> Some Modal
+    | _ -> None
+  ;;
+end
+
 type t =
   { lexicon : Lexicon.t
-  ; subject : Phrase.t
+  ; noun_phrase : Phrase.t
   ; nominal : Phrase.t
-  ; action : Phrase.t
-  ; adjective : Phrase.t
+  ; verb_phrase : Phrase.t
+  ; adjective_phrase : Phrase.t
   }
 
-let grammar_of lexicon =
-  let open Phrase in
-  let word reading ~separator =
-    Word (fun word -> (not (separator word)) && reading lexicon word)
+let word_of lexicon reading ~separator =
+  Phrase.Word (fun word -> (not (separator word)) && reading lexicon word)
+;;
+
+let adjective_phrase_of lexicon =
+  let adverbs =
+    Phrase.Many (word_of lexicon Lexicon.is_adverb ~separator:is_preposition)
   in
-  let noun = word Lexicon.is_noun ~separator:is_preposition in
-  let modifiers_of separator = Many (word Lexicon.is_adverb ~separator) in
-  let adjective =
-    Sequence
-      [ modifiers_of is_preposition; word Lexicon.is_adjective ~separator:is_preposition ]
+  Phrase.Sequence
+    [ adverbs; word_of lexicon Lexicon.is_adjective ~separator:is_preposition ]
+;;
+
+let noun_phrase_of lexicon =
+  let noun = word_of lexicon Lexicon.is_noun ~separator:is_preposition in
+  Phrase.Sequence [ Many (Choice [ noun; adjective_phrase_of lexicon ]); noun ]
+;;
+
+let verb_phrase_of lexicon =
+  let adverbs =
+    Phrase.Many (word_of lexicon Lexicon.is_adverb ~separator:is_conjunction)
   in
-  let subject = Sequence [ Many (Choice [ noun; adjective ]); noun ] in
-  let modifiers = modifiers_of is_conjunction in
-  let verb =
-    Sequence [ modifiers; word Lexicon.is_verb ~separator:is_conjunction; modifiers ]
-  in
+  let verb = word_of lexicon Lexicon.is_verb ~separator:is_conjunction in
+  Phrase.chain (Sequence [ adverbs; verb; adverbs ]) (Word is_conjunction)
+;;
+
+(* A nominal joins noun phrases with prepositions, as in [start_of_line]. *)
+let of_lexicon lexicon =
+  let noun_phrase = noun_phrase_of lexicon in
   { lexicon
-  ; subject
-  ; nominal = chain subject (Word is_preposition)
-  ; action = chain verb (Word is_conjunction)
-  ; adjective
+  ; noun_phrase
+  ; nominal = Phrase.chain noun_phrase (Word is_preposition)
+  ; verb_phrase = verb_phrase_of lexicon
+  ; adjective_phrase = adjective_phrase_of lexicon
   }
 ;;
 
-let stem_of name =
-  String.lstrip name ~drop:(Char.equal '_') |> String.rstrip ~drop:(Char.equal '\'')
-;;
+module Name = struct
+  type predicate =
+    { auxiliary : Auxiliary.t
+    ; complement : string list
+    }
 
-let is_letter name =
-  let stem = stem_of name in
-  match String.is_empty stem with
-  | true -> false
-  | false ->
-    let letter = Stdlib.String.get_utf_8_uchar stem 0 in
-    Stdlib.Uchar.utf_decode_is_valid letter
-    && Stdlib.Uchar.utf_decode_length letter = String.length stem
-    && Uucp.Alpha.is_alphabetic (Stdlib.Uchar.utf_decode_uchar letter)
-;;
+  type t =
+    { spelling : string
+    ; words : string list
+    ; predicate : predicate option
+    }
 
-type auxiliary =
-  | Copula
-  | Possession
-  | Modal
+  let stem_of spelling =
+    String.lstrip spelling ~drop:(Char.equal '_') |> String.rstrip ~drop:(Char.equal '\'')
+  ;;
 
-type name =
-  { spelling : string
-  ; words : string list
-  ; predicate : (auxiliary * string list) option
-  }
-
-let read spelling =
-  let words = String.split (stem_of spelling) ~on:'_' in
-  let predicate =
+  let predicate_of words =
     match words with
-    | first :: (_ :: _ as rest) ->
-      (match String.lowercase first with
-       | "is" | "are" -> Some (Copula, rest)
-       | "has" | "have" -> Some (Possession, rest)
-       | "does" | "do" | "can" | "may" | "must" | "should" | "will" -> Some (Modal, rest)
-       | _ -> None)
+    | first :: (_ :: _ as complement) ->
+      Option.map (Auxiliary.of_word first) ~f:(fun auxiliary -> { auxiliary; complement })
     | _ -> None
-  in
-  { spelling; words; predicate }
+  ;;
+
+  let of_spelling spelling =
+    let words = String.split (stem_of spelling) ~on:'_' in
+    { spelling; words; predicate = predicate_of words }
+  ;;
+
+  let has_auxiliary name = Option.is_some name.predicate
+
+  let is_letter name =
+    let stem = stem_of name.spelling in
+    match String.is_empty stem with
+    | true -> false
+    | false ->
+      let decoding = Stdlib.String.get_utf_8_uchar stem 0 in
+      Stdlib.Uchar.utf_decode_is_valid decoding
+      && Stdlib.Uchar.utf_decode_length decoding = String.length stem
+      && Uucp.Alpha.is_alphabetic (Stdlib.Uchar.utf_decode_uchar decoding)
+  ;;
+
+  (* We keep the spelling around the stem, such as a leading underscore. *)
+  let respell name words =
+    String.substr_replace_first
+      name.spelling
+      ~pattern:(stem_of name.spelling)
+      ~with_:(String.concat ~sep:"_" words)
+  ;;
+end
+
+module Reading = struct
+  type t =
+    | Noun_phrase
+    | Verb_phrase
+    | Predicate
+    | Nominal of string list
+  [@@deriving equal, sexp_of]
+end
+
+let is_complement grammar ({ auxiliary; complement } : Name.predicate) =
+  match auxiliary, complement with
+  | Modal, _ -> Phrase.does_match grammar.verb_phrase complement
+  | Possession, _ -> Phrase.does_match grammar.nominal complement
+  | Copula, first :: rest when is_preposition first ->
+    Phrase.does_match grammar.nominal rest
+  | Copula, _ ->
+    Phrase.does_match (Choice [ grammar.nominal; grammar.adjective_phrase ]) complement
 ;;
 
-let is_predicate name = Option.is_some name.predicate
-
-let is_noun grammar name =
-  (not (is_predicate name)) && Phrase.does_match grammar.nominal name.words
-;;
-
-let is_complement grammar auxiliary words =
-  match auxiliary, words with
-  | Modal, _ -> Phrase.does_match grammar.action words
-  | Possession, _ -> Phrase.does_match grammar.nominal words
-  | Copula, first :: tail when is_preposition first ->
-    Phrase.does_match grammar.nominal tail
-  | Copula, _ -> Phrase.does_match (Choice [ grammar.nominal; grammar.adjective ]) words
-;;
-
-let inflect word singular =
-  match String.equal word (String.uppercase word) with
+(* We spell a singular in the case of the plural it replaces. *)
+let inflect plural singular =
+  match String.equal plural (String.uppercase plural) with
   | true -> String.uppercase singular
-  | false when Char.is_uppercase word.[0] -> String.capitalize singular
+  | false when Char.is_uppercase plural.[0] -> String.capitalize singular
   | false -> singular
 ;;
 
-let singulars_of lexicon name ~subject ~complement =
+let singulars_of grammar name ~subject ~complement =
   match List.rev subject with
   | [] -> []
   | head :: modifiers ->
     let noun = String.lowercase head in
-    List.filter (Lexicon.singulars_of lexicon noun) ~f:(Fn.non (String.equal noun))
+    List.filter
+      (Lexicon.singulars_of grammar.lexicon noun)
+      ~f:(Fn.non (String.equal noun))
     |> List.map ~f:(fun singular ->
-      let words = List.rev_append modifiers (inflect head singular :: complement) in
-      String.substr_replace_first
-        name.spelling
-        ~pattern:(stem_of name.spelling)
-        ~with_:(String.concat ~sep:"_" words))
+      Name.respell name (List.rev_append modifiers (inflect head singular :: complement)))
 ;;
 
-let function_of grammar name =
-  let accept judgement = Option.some_if judgement [] in
-  match name.predicate, name.words with
-  | Some (auxiliary, complement), _ -> accept (is_complement grammar auxiliary complement)
-  | None, first :: tail when is_preposition first ->
-    accept (Phrase.does_match grammar.nominal tail)
-  | None, words ->
-    let subject, complement = List.split_while words ~f:(Fn.non is_preposition) in
-    (match complement with
-     | [] -> accept (Phrase.does_match grammar.action subject)
-     | _ :: tail ->
-       let%map.Option () =
-         Option.some_if
-           (Phrase.does_match grammar.subject subject
-            && (List.is_empty tail || Phrase.does_match grammar.nominal tail))
-           ()
-       in
-       singulars_of grammar.lexicon name ~subject ~complement)
+let noun_reading grammar (name : Name.t) =
+  Option.some_if (Phrase.does_match grammar.nominal name.words) Reading.Noun_phrase
+;;
+
+let verb_reading grammar (name : Name.t) =
+  Option.some_if
+    ((not (List.exists name.words ~f:is_preposition))
+     && Phrase.does_match grammar.verb_phrase name.words)
+    Reading.Verb_phrase
+;;
+
+let nominal_reading grammar (name : Name.t) =
+  let is_object words = List.is_empty words || Phrase.does_match grammar.nominal words in
+  match List.split_while name.words ~f:(Fn.non is_preposition) with
+  | _, [] -> None
+  | [], _ :: rest ->
+    Option.some_if (Phrase.does_match grammar.nominal rest) (Reading.Nominal [])
+  | subject, (_ :: rest as complement) ->
+    let%map.Option () =
+      Option.some_if (Phrase.does_match grammar.noun_phrase subject && is_object rest) ()
+    in
+    Reading.Nominal (singulars_of grammar name ~subject ~complement)
+;;
+
+let readings_of grammar (name : Name.t) =
+  match name.predicate with
+  | Some predicate ->
+    Option.to_list (Option.some_if (is_complement grammar predicate) Reading.Predicate)
+  | None ->
+    List.filter_opt
+      [ noun_reading grammar name
+      ; verb_reading grammar name
+      ; nominal_reading grammar name
+      ]
 ;;

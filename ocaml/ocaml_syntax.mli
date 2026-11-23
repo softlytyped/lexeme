@@ -1,7 +1,7 @@
-(** The OCaml parser's binding sites, before ppx expansion. *)
+(** The bindings of an OCaml implementation or interface, before ppx expansion. *)
 
 open! Core
 
-(** Folds an implementation or interface into the algebra. Returns the parser's diagnostic
-    when the input is malformed. *)
-val fold : Binding_syntax.Source.t -> 'result Binding_syntax.algebra -> 'result Or_error.t
+(** Reads the program of a source's bindings. Fails with the parser's diagnostics when the
+    source is malformed, and when the compiler's types cannot be read. *)
+val read : path:string -> string -> unit Syntax.t Or_error.t

@@ -1,6 +1,5 @@
 (library
  (name lexicon)
- (public_name lexeme.lexicon)
  (private_modules english)
  (libraries core)
  (preprocess
@@ -12,6 +11,6 @@
   (with-stdout-to
    %{target}
    (progn
-    (echo "let vocabulary = {|\n")
+    (echo "let table = {|\n")
     (cat %{dep:english/wordnet.words})
     (echo "|}\n")))))

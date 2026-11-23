@@ -1,6 +1,5 @@
 (library
- (name binding_syntax)
- (public_name lexeme.syntax)
- (libraries core)
+ (name syntax)
+ (libraries binding core)
  (preprocess
   (pps ppx_jane)))

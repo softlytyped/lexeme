@@ -1,6 +1,5 @@
 (library
  (name c_syntax)
- (public_name lexeme.c)
- (libraries core lexeme.process lexeme.syntax yojson)
+ (libraries binding core process source syntax yojson)
  (preprocess
   (pps ppx_jane)))

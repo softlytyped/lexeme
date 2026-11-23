@@ -1,0 +1,5 @@
+(library
+ (name configuration)
+ (libraries core core_unix.sys_unix judgement lexicon)
+ (preprocess
+  (pps ppx_jane)))

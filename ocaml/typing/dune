@@ -1,6 +1,5 @@
 (library
  (name typing)
- (public_name lexeme.typing)
- (libraries core lexeme.inferred lexeme.syntax merlin-lib.ocaml_parsing)
+ (libraries binding core merlin-lib.ocaml_parsing session)
  (preprocess
   (pps ppx_jane)))

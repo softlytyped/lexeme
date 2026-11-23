@@ -2,14 +2,16 @@
  (name main)
  (public_name lexeme)
  (libraries
+  c_syntax
+  configuration
   core
   core_unix.command_unix
   core_unix.sys_unix
-  lexeme.c
-  lexeme.lexicon
-  lexeme.naming
-  lexeme.ocaml
-  lexeme.process
-  lexeme.syntax)
+  diagnostic
+  judgement
+  lexicon
+  ocaml_syntax
+  process
+  syntax)
  (preprocess
   (pps ppx_jane)))

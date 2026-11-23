@@ -1,6 +1,5 @@
 (library
  (name grammar)
- (public_name lexeme.grammar)
- (libraries core lexeme.lexicon uucp)
+ (libraries core lexicon uucp)
  (preprocess
   (pps ppx_jane)))

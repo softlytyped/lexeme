@@ -1,16 +1,22 @@
 open! Core
 
-let interpret ?(path = "input.ml") text algebra =
-  let source = Binding_syntax.Source.source_of_string ~path text in
-  Ocaml_syntax.fold source algebra
+let algebra =
+  Judgement.algebra_of
+    (force Lexicon.english)
+    ~limits:Judgement.Limits.default
+    ~exemptions:(String.Set.singleton "main")
+;;
+
+let diagnostics_of ?(path = "input.ml") text =
+  Ocaml_syntax.read ~path text
+  |> Or_error.ok_exn
+  |> Syntax.fold algebra
+  |> Judgement.diagnostics_of
 ;;
 
 let check ?path text =
-  let file =
-    interpret ?path text (Naming.algebra_of (force Lexicon.english)) |> Or_error.ok_exn
-  in
-  List.iter (Naming.diagnostics_of file) ~f:(fun diagnostic ->
-    print_endline (Naming.format diagnostic))
+  List.iter (diagnostics_of ?path text) ~f:(fun diagnostic ->
+    print_endline (Diagnostic.to_string diagnostic))
 ;;
 
 let%expect_test "only a plural subject and a singular function in its scope make a note" =
@@ -99,17 +105,11 @@ let%expect_test "declaration order preserves the set of plural notices" =
     ]
   in
   Quickcheck.test (List.gen_permutations declarations) ~f:(fun permutation ->
-    let file =
-      interpret
-        (String.concat ~sep:"\n" permutation)
-        (Naming.algebra_of (force Lexicon.english))
-      |> Or_error.ok_exn
+    let subjects =
+      diagnostics_of (String.concat ~sep:"\n" permutation)
+      |> List.map ~f:(fun diagnostic -> diagnostic.subject)
     in
-    let notes =
-      Naming.diagnostics_of file
-      |> List.map ~f:(fun diagnostic -> diagnostic.binding.name)
-    in
-    [%test_result: string list] notes ~expect:[ "entries_at" ]);
+    [%test_result: string list] subjects ~expect:[ "entries_at" ]);
   [%expect {| |}]
 ;;
 
@@ -195,5 +195,70 @@ val is_empty : unit -> Bool.t|};
     decisions.mli:5:5: error[predicate-result] has_rows: expected a Boolean result, found int
     decisions.mli:7:5: error[predicate-result] is_empty: expected a Boolean result, found string
     input.ml:2:7: error[predicate-result] does_reduce: expected a Boolean result, found int
+    |}]
+;;
+
+let%expect_test "a function's name agrees with what it gives" =
+  check
+    ~path:"agreement.mli"
+    {|val contains : int list -> int -> bool
+val is_empty : int list -> bool
+val entries_of : int -> unit
+val of_int : int -> unit
+val print : int -> unit
+val size_of : int list -> int|};
+  check {|let matches left right = left = right
+let report count = ignore count|};
+  [%expect
+    {|
+    agreement.mli:1:5: error[predicate-name] contains: expected a predicate such as is_empty or has_entries for a Boolean result
+    agreement.mli:3:5: error[command-name] entries_of: expected a root verb phrase for a function that gives nothing
+    agreement.mli:4:5: error[command-name] of_int: expected a root verb phrase for a function that gives nothing
+    input.ml:1:5: error[predicate-name] matches: expected a predicate such as is_empty or has_entries for a Boolean result
+    |}]
+;;
+
+(* A function of [lines] lines of code, with a blank line and a comment between each,
+   which do not count. *)
+let function_of_length lines =
+  let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore 0;\n\n  (* a step *)\n") in
+  "let apply () =\n" ^ String.concat steps ^ "  ()\n"
+;;
+
+let%expect_test "a function past each limit earns a note, a warning and then an error" =
+  List.iter [ 10; 11; 20; 21; 30; 31 ] ~f:(fun lines -> check (function_of_length lines));
+  [%expect
+    {|
+    input.ml:1:5: note[function-length] apply: 11 lines of code, past the soft limit of 10
+    input.ml:1:5: note[function-length] apply: 20 lines of code, past the soft limit of 10
+    input.ml:1:5: warning[function-length] apply: 21 lines of code, past the hard limit of 20
+    input.ml:1:5: warning[function-length] apply: 30 lines of code, past the hard limit of 20
+    input.ml:1:5: error[function-length] apply: 31 lines of code, past the limit of 30
+    |}]
+;;
+
+let%expect_test "an exemption spares a name but not its length" =
+  check {|let main () = ()|};
+  check
+    (String.substr_replace_first (function_of_length 11) ~pattern:"apply" ~with_:"main");
+  [%expect
+    {| input.ml:1:5: note[function-length] main: 11 lines of code, past the soft limit of 10 |}]
+;;
+
+let%expect_test "limits must rise from soft to hard to reject" =
+  List.iter
+    [ "((soft 10) (hard 20) (reject 30))"
+    ; "((soft 20) (hard 10) (reject 30))"
+    ; "((soft 0) (hard 0) (reject 0))"
+    ]
+    ~f:(fun text ->
+      let limits =
+        Or_error.try_with (fun () -> Judgement.Limits.t_of_sexp (Sexp.of_string text))
+      in
+      print_s [%sexp (Result.is_ok limits : bool)]);
+  [%expect {|
+    true
+    false
+    false
     |}]
 ;;

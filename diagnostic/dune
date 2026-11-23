@@ -1,0 +1,5 @@
+(library
+ (name diagnostic)
+ (libraries binding core source)
+ (preprocess
+  (pps ppx_jane)))

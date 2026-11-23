@@ -1,0 +1,5 @@
+(library
+ (name judgement)
+ (libraries binding core diagnostic grammar lexicon source syntax)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,12 +1,14 @@
-(** The bindings of a C translation unit in the active preprocessor configuration. *)
+(** The bindings of a C translation unit, in the active preprocessor configuration. *)
 
 open! Core
 
-(** Folds declarations spelled in the source file. Include directories and macro
-    definitions go to Clang. Fails when the translation unit cannot be parsed. *)
-val fold
-  :  Binding_syntax.Source.t
+(** Reads the program of the declarations spelled in a C source. Clang parses the text,
+    with the source's directory, the include [directories] and the macro [definitions].
+    Declarations from an included file are read when that file is. Fails when Clang cannot
+    parse the translation unit. *)
+val read
+  :  path:string
   -> directories:string list
   -> definitions:string list
-  -> 'result Binding_syntax.algebra
-  -> 'result Or_error.t
+  -> string
+  -> unit Syntax.t Or_error.t
