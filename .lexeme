@@ -1,5 +1,4 @@
 ((vocabulary
   ((nouns
-    (adposition backquote backslash bigram boolean codomain complementizer conditional conjunct
-     consequent delimiter diagnostic iterator keyword nesting parataxis
-     perceptron relativizer reparandum scrutinee sexp subtype treebank trigram tuple unigram valency)))))
+    (boolean codomain conditional consequent diagnostic iterator keyword nesting scrutinee
+     sexp tuple)))))

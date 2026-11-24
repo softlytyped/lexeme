@@ -13,9 +13,9 @@
 
 (package
  (name lexeme)
- (synopsis "A linter for the names and definitions of OCaml and C programs")
+ (synopsis "A linter for the names, branches and idioms of OCaml and C programs")
  (description
-  "Lexeme reads each name where a program binds it and asks whether the name reads as English for what it names, and checks the length of each function and how its body branches.")
+  "Lexeme checks that each name in an OCaml or C program is English for what it names. It also checks the length of each function, the way in which each function body branches, chains of let expressions, the use of record fields from other modules, and idioms that have a plainer form.")
  (depends
   (ocaml (>= 5.4))
   dune
