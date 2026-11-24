@@ -1,0 +1,12 @@
+(library
+ (name idioms)
+ (libraries
+  branching
+  core
+  idiom
+  merlin-lib.kernel
+  merlin-lib.ocaml_parsing
+  session
+  source)
+ (preprocess
+  (pps ppx_jane)))

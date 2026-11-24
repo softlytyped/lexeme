@@ -3,11 +3,12 @@ open! Core
 (* The texts here never nest comments, so each opening pairs with the next closing. *)
 let comments_in text =
   let offsets_of pattern = String.substr_index_all text ~may_overlap:false ~pattern in
-  List.zip_exn (offsets_of "(*") (offsets_of "*)")
-  |> List.map ~f:(fun (start, closing) ->
-    let body = String.slice text (start + String.length "(*") closing in
-    let extent = Source.Extent.create ~start ~stop:(closing + String.length "*)") in
-    Source.Comment.create ~extent ~body)
+  List.map
+    (List.zip_exn (offsets_of "(*") (offsets_of "*)"))
+    ~f:(fun (start, closing) ->
+      let body = String.slice text (start + String.length "(*") closing in
+      let extent = Source.Extent.create ~start ~stop:(closing + String.length "*)") in
+      Source.Comment.create ~extent ~body)
 ;;
 
 let source_of text = Source.create ~path:"input.ml" ~comments:(comments_in text) text

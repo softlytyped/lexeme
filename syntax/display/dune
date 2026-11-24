@@ -1,5 +1,5 @@
 (library
  (name display)
- (libraries access binding chain core decision notation syntax)
+ (libraries access binding chain core decision idiom notation syntax)
  (preprocess
   (pps ppx_jane)))

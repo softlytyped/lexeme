@@ -74,8 +74,10 @@ let code_lines_of text line_starts comments =
 ;;
 
 let bodies_of comments =
-  List.map comments ~f:(fun (comment : Comment.t) -> comment.extent.start, comment.body)
-  |> Int.Map.of_alist_reduce ~f:Fn.const
+  Int.Map.of_alist_reduce
+    (List.map comments ~f:(fun (comment : Comment.t) ->
+       comment.extent.start, comment.body))
+    ~f:Fn.const
 ;;
 
 let create ~path ~comments text =

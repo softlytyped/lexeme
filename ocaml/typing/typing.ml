@@ -59,8 +59,8 @@ let shape_of_annotation annotation =
 
 let unknown = Lazy.from_val Codomain.Unknown
 
-let codomain_of_return = function
-  | Pconstraint annotation | Pcoerce (_, annotation) -> lazy (codomain_of annotation)
+let codomain_of_return (Pconstraint annotation | Pcoerce (_, annotation)) =
+  lazy (codomain_of annotation)
 ;;
 
 (* The expression whose value an expression gives, beneath a binding or a constraint

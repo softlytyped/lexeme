@@ -10,9 +10,7 @@ module Shape = struct
     | Value of 'codomain
     | Function of 'codomain
 
-  let result_of = function
-    | Value result | Function result -> result
-  ;;
+  let result_of (Value result | Function result) = result
 
   let map shape ~f:transform =
     match shape with
@@ -146,12 +144,12 @@ let shapes_in pipeline typing =
 (* A field's name, with the description of its label, where a program reads the field,
    writes it, builds a record with it, or matches it in a pattern. *)
 let written_labels_of fields =
-  Array.to_list fields
-  |> List.filter_map
-       ~f:(fun (label, _, (definition : Typedtree.record_label_definition)) ->
-         match definition with
-         | Overridden (lid, _) -> Some (lid.loc, label)
-         | Kept _ -> None)
+  List.filter_map
+    (Array.to_list fields)
+    ~f:(fun (label, _, (definition : Typedtree.record_label_definition)) ->
+      match definition with
+      | Overridden (lid, _) -> Some (lid.loc, label)
+      | Kept _ -> None)
 ;;
 
 let labels_of = function
@@ -171,8 +169,9 @@ let standard_interface = "stdlib.cmi"
 let has_file directory file = Stdlib.Sys.file_exists (Filename.concat directory file)
 
 let library_directory_of directories =
-  List.find directories ~f:(fun directory -> has_file directory standard_interface)
-  |> Option.map ~f:Filename.dirname
+  Option.map
+    (List.find directories ~f:(fun directory -> has_file directory standard_interface))
+    ~f:Filename.dirname
 ;;
 
 let is_built_here ~build_path:directories name =
@@ -218,9 +217,11 @@ let owners_in pipeline typing =
 ;;
 
 let typed_index_of pipeline ~path ~index =
-  Or_error.try_with (fun () ->
-    Mpipeline.with_pipeline pipeline (fun () -> index (Mpipeline.typer_result pipeline)))
-  |> Or_error.tag ~tag:("could not read the compiler types for " ^ path)
+  Or_error.tag
+    (Or_error.try_with (fun () ->
+       Mpipeline.with_pipeline pipeline (fun () ->
+         index (Mpipeline.typer_result pipeline))))
+    ~tag:("could not read the compiler types for " ^ path)
 ;;
 
 let pipeline_of ~path text =

@@ -15,6 +15,7 @@ module Operation = struct
     | Access of Access.t
     | Chain of Chain.t
     | Notation of Notation.t
+    | Idiom of Idiom.t
 end
 
 module Program = struct
@@ -44,6 +45,7 @@ let decide decision = perform (Decision decision)
 let access field_access = perform (Access field_access)
 let chain links = perform (Chain links)
 let sequence notation = perform (Notation notation)
+let express idiom = perform (Idiom idiom)
 let enclose body = Scope (Block, body, return ())
 let define binding body = Scope (Function_body binding, body, return ())
 
@@ -58,6 +60,7 @@ module Recorder = struct
   let access recorder field_access = add recorder (access field_access)
   let chain recorder links = add recorder (chain links)
   let sequence recorder notation = add recorder (sequence notation)
+  let express recorder idiom = add recorder (express idiom)
 
   let nest recorder scope traverse =
     let outer_steps = recorder.steps in
@@ -83,6 +86,7 @@ type 'result algebra =
   ; access : Access.t -> 'result
   ; chain : Chain.t -> 'result
   ; sequence : Notation.t -> 'result
+  ; express : Idiom.t -> 'result
   ; enclose : 'result list -> 'result
   ; define : Binding.t -> 'result list -> 'result
   }
@@ -101,6 +105,7 @@ let interpret algebra : Operation.t -> _ = function
   | Access field_access -> algebra.access field_access
   | Chain links -> algebra.chain links
   | Notation notation -> algebra.sequence notation
+  | Idiom idiom -> algebra.express idiom
 ;;
 
 (* We gather a scope's children in reverse. *)

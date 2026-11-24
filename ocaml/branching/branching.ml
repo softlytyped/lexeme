@@ -88,8 +88,8 @@ let work_of work definitions =
 ;;
 
 let work_of_operations operations =
-  List.map operations ~f:(fun operation -> names_bound_by operation.pbop_pat)
-  |> String.Set.union_list
+  String.Set.union_list
+    (List.map operations ~f:(fun operation -> names_bound_by operation.pbop_pat))
 ;;
 
 (* The expression beneath a wrapper that does no work: the rest of a sequence, a

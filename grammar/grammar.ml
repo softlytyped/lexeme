@@ -167,7 +167,7 @@ module Name = struct
     }
 
   let stem_of spelling =
-    String.lstrip spelling ~drop:(Char.equal '_') |> String.rstrip ~drop:(Char.equal '\'')
+    String.rstrip (String.lstrip spelling ~drop:(Char.equal '_')) ~drop:(Char.equal '\'')
   ;;
 
   let predicate_of words =
@@ -280,12 +280,12 @@ let is_nominal grammar (name : Name.t) =
 ;;
 
 let statement_readings_of grammar name =
-  [ is_noun_phrase, Reading.Noun_phrase
-  ; is_verb_phrase, Verb_phrase
-  ; is_nominal, Nominal
-  ]
-  |> List.filter_map ~f:(fun (is_reading, reading) ->
-    Option.some_if (is_reading grammar name) reading)
+  List.filter_map
+    [ is_noun_phrase, Reading.Noun_phrase
+    ; is_verb_phrase, Verb_phrase
+    ; is_nominal, Nominal
+    ]
+    ~f:(fun (is_reading, reading) -> Option.some_if (is_reading grammar name) reading)
 ;;
 
 let readings_of grammar (name : Name.t) =

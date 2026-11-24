@@ -88,6 +88,8 @@ module Rule : sig
         }
     (** [Mixed_notation] is a function that writes one of a monad's operations both as an
         infix operator and as a let, on the given lines. *)
+    | Idiom of Idiom.Form.t
+    (** [Idiom form] is an expression in a form that a plainer form can replace. *)
     | Function_length of
         { lines : int
         ; bound : int
@@ -117,6 +119,10 @@ val of_access : Access.t -> t
 val of_binding : Binding.t -> Rule.t -> t
 val of_decision : Decision.t -> Rule.t -> t
 val of_link : Chain.Link.t -> Rule.t -> t
+
+(** [of_idiom idiom] returns the finding on an idiom, by its form. *)
+val of_idiom : Idiom.t -> t
+
 val severity_of : t -> Severity.t
 
 (** [code_of diagnostic] returns the code of the diagnostic's rule, such as

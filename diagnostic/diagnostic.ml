@@ -192,6 +192,76 @@ module Rule = struct
     ;;
   end
 
+  (* Each idiom has a plainer form, which its message names. *)
+  module Idiom = struct
+    type t = Idiom.Form.t
+
+    type description =
+      { code : string
+      ; severity : Severity.t
+      ; message : string
+      }
+
+    let descriptions : (t * description) list =
+      [ ( One_stage_pipeline
+        , { code = "one-stage-pipeline"
+          ; severity = Note
+          ; message = "this pipeline has one stage, so could it be a plain application?"
+          } )
+      ; ( Boolean_branches
+        , { code = "boolean-branches"
+          ; severity = Warning
+          ; message =
+              "the branches of this if-then-else are true and false, so the expression \
+               is its condition, or the negation of it"
+          } )
+      ; ( Eta_expansion
+        , { code = "eta-expansion"
+          ; severity = Note
+          ; message =
+              "this anonymous function applies a function to its parameter and does \
+               nothing else, so could it be that function itself?"
+          } )
+      ; ( One_case_function
+        , { code = "one-case-function"
+          ; severity = Note
+          ; message = "this function has one case, so could fun take its pattern?"
+          } )
+      ; ( Discard_without_type
+        , { code = "untyped-ignore"
+          ; severity = Warning
+          ; message =
+              "this ignore has no type annotation, so a partial application could pass \
+               through it unseen; could it be ignore (value : type)?"
+          } )
+      ; ( Length_comparison
+        , { code = "length-comparison"
+          ; severity = Note
+          ; message =
+              "this compares a length with zero, so could is_empty, which for a list \
+               stops at the first element, take its place?"
+          } )
+      ; ( Boolean_parameter
+        , { code = "boolean-parameter"
+          ; severity = Note
+          ; message =
+              "this parameter is a Boolean, so could a variant type name its cases?"
+          } )
+      ; ( Nested_anonymous_function
+        , { code = "nested-function"
+          ; severity = Note
+          ; message =
+              "this anonymous function is within two others, so could a let name one of \
+               them?"
+          } )
+      ]
+    ;;
+
+    let description_of form =
+      List.Assoc.find_exn descriptions form ~equal:Idiom.Form.equal
+    ;;
+  end
+
   type t =
     | Name of Name.t
     | Answer of Answer.t
@@ -203,6 +273,7 @@ module Rule = struct
         { operation : Notation.Operation.t
         ; lines : string
         }
+    | Idiom of Idiom.t
     | Function_length of
         { lines : int
         ; bound : int
@@ -215,6 +286,7 @@ module Rule = struct
     | Branch branch -> Branch.severity_of branch
     | Plural_lift _ | Chain _ -> Note
     | Field_access _ | Mixed_notation _ -> Warning
+    | Idiom form -> (Idiom.description_of form).severity
     | Function_length { severity; _ } -> severity
   ;;
 
@@ -226,6 +298,7 @@ module Rule = struct
     | Field_access _ -> "field-access"
     | Chain chain -> Chain.code_of chain
     | Mixed_notation _ -> "mixed-notation"
+    | Idiom form -> (Idiom.description_of form).code
     | Function_length _ -> "function-length"
   ;;
 
@@ -269,6 +342,7 @@ module Rule = struct
     | Field_access access -> access_message_of access
     | Chain chain -> Chain.message_of chain
     | Mixed_notation { operation; lines } -> notation_message_of operation lines
+    | Idiom form -> (Idiom.description_of form).message
     | Function_length { lines; bound; _ } -> length_message_of lines bound
   ;;
 end
@@ -294,6 +368,13 @@ let of_access access =
 
 let of_link link =
   create ~site:(Chain.Link.site_of link) ~subject:(Chain.Link.keyword_of link)
+;;
+
+let of_idiom idiom =
+  create
+    ~site:(Idiom.site_of idiom)
+    ~subject:(Idiom.subject_of idiom)
+    (Idiom (Idiom.form_of idiom))
 ;;
 
 let of_decision decision =

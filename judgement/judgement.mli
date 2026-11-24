@@ -21,9 +21,10 @@ type t
 
 (** Returns the algebra that judges each binding by its name, its type and its length,
     each function body by its decisions and by the notations of its monads, each chain of
-    lets by how it mixes its styles, each field access by the record that it uses, and
-    each scope by the plural lifts among its declarations. A name in [exemptions] is not
-    judged as a name, though its definition still is. *)
+    lets by how it mixes its styles, each field access by the record that it uses, each
+    idiom by the plainer form that can replace it, and each scope by the plural lifts
+    among its declarations. A name in [exemptions] is not judged as a name, though its
+    definition still is. *)
 val algebra_of
   :  Lexicon.t
   -> limits:Limits.t

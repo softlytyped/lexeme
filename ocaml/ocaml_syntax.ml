@@ -9,6 +9,7 @@ type context =
   ; session : Session.t
   ; late_guards : Source.Extent.Set.t
   ; nested_booleans : Source.Extent.Set.t
+  ; idioms : (Idiom.Form.t * string) list Source.Extent.Map.t
   ; recorder : Syntax.Recorder.t
   }
 
@@ -22,6 +23,12 @@ let is_identifier spelling =
     || Char.( > ) letter '\127')
 ;;
 
+let site_at context location =
+  Source.site_at
+    context.source
+    ~offset:(Source.Extent.start_of (Session.extent_of location))
+;;
+
 let binding_of context ?definition role (name : string Location.loc) =
   if is_identifier name.txt
   then (
@@ -31,8 +38,9 @@ let binding_of context ?definition role (name : string Location.loc) =
 ;;
 
 let declare context ?definition role name =
-  binding_of context ?definition role name
-  |> Option.iter ~f:(Syntax.Recorder.declare context.recorder)
+  Option.iter
+    (binding_of context ?definition role name)
+    ~f:(Syntax.Recorder.declare context.recorder)
 ;;
 
 let has_body binding =
@@ -99,6 +107,31 @@ let unpack context (iterator : Ast_iterator.iterator) definition ~role_of =
   iterator.expr iterator definition.pvb_expr
 ;;
 
+let is_boolean_codomain : Binding.Codomain.t -> bool = function
+  | Boolean -> true
+  | Optional_boolean | Fallible_boolean | Unit _ | Other_type _ | Unknown -> false
+;;
+
+let is_boolean_value : _ Session.Shape.t option -> bool = function
+  | Some (Value codomain) -> is_boolean_codomain (force codomain)
+  | Some (Function _) | None -> false
+;;
+
+let is_boolean context (name : string Location.loc) =
+  is_boolean_value (Session.shape_at context.session (Session.extent_of name.loc))
+;;
+
+(* A named function's parameter of type bool is an idiom, which a variant could replace. *)
+let screen context definition =
+  List.filter_map (Idioms.parameters_of definition.pvb_expr) ~f:name_of_pattern
+  |> List.filter ~f:(is_boolean context)
+  |> List.iter ~f:(fun (name : string Location.loc) ->
+    let site = site_at context name.loc in
+    Syntax.Recorder.express
+      context.recorder
+      (Idiom.create ~site ~subject:name.txt Boolean_parameter))
+;;
+
 (* A value binding of one name introduces it, with its definition's extent. *)
 let define context (iterator : Ast_iterator.iterator) definition =
   let role_of = Typing.role_of_definition context.session definition in
@@ -106,6 +139,7 @@ let define context (iterator : Ast_iterator.iterator) definition =
   let extent = Session.extent_of definition.pvb_loc in
   match name_of_pattern definition.pvb_pat with
   | Some name ->
+    screen context definition;
     introduce context (binding_of context ~definition:extent (role_of name) name) ~descend
   | None -> unpack context iterator definition ~role_of
 ;;
@@ -226,12 +260,6 @@ let decision_of context expression =
     ~form
     ~placement:(placement_of context extent)
     ~nesting:(nesting_of context extent)
-;;
-
-let site_at context location =
-  Source.site_at
-    context.source
-    ~offset:(Source.Extent.start_of (Session.extent_of location))
 ;;
 
 (* An extension such as [bind] or [bind.Option] names the operation of [let%bind]. *)
@@ -357,11 +385,19 @@ let observe context expression =
   | _ -> ()
 ;;
 
+let express context expression =
+  let site = site_at context expression.pexp_loc in
+  let forms = Map.find_multi context.idioms (Session.extent_of expression.pexp_loc) in
+  List.iter forms ~f:(fun (form, subject) ->
+    Syntax.Recorder.express context.recorder (Idiom.create ~site ~subject form))
+;;
+
 let visit context (iterator : Ast_iterator.iterator) expression =
   Option.iter
     (decision_of context expression)
     ~f:(Syntax.Recorder.decide context.recorder);
   observe context expression;
+  express context expression;
   base.expr iterator expression
 ;;
 
@@ -471,8 +507,9 @@ let program_of source session =
   let syntax_tree = Session.syntax_tree_of session in
   let late_guards = Branching.late_guards_in syntax_tree in
   let nested_booleans = Branching.nested_booleans_in syntax_tree in
+  let idioms = Idioms.forms_in syntax_tree in
   Syntax.record (fun recorder ->
-    traverse { source; session; late_guards; nested_booleans; recorder })
+    traverse { source; session; late_guards; nested_booleans; idioms; recorder })
 ;;
 
 let read ~path text =

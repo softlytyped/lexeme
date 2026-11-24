@@ -145,7 +145,7 @@ let codomain_of_result result =
     | "const" | "volatile" -> true
     | _ -> false
   in
-  match String.split result ~on:' ' |> List.filter ~f:(Fn.non is_qualifier) with
+  match List.filter (String.split result ~on:' ') ~f:(Fn.non is_qualifier) with
   | [ ("bool" | "_Bool") ] -> Codomain.Boolean
   | [ "void" ] -> Unit "void"
   | _ -> Other_type result
@@ -255,8 +255,9 @@ let program_of ~path text tree =
 ;;
 
 let tree_of output =
-  Or_error.try_with (fun () -> Yojson.Safe.from_string output)
-  |> Or_error.tag ~tag:"expected Clang's declaration tree"
+  Or_error.tag
+    (Or_error.try_with (fun () -> Yojson.Safe.from_string output))
+    ~tag:"expected Clang's declaration tree"
 ;;
 
 let read ~path ~directories ~definitions text =

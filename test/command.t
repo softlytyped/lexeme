@@ -44,6 +44,7 @@ Compiler-inferred predicate types apply to local definitions, aliases and C type
   > let fold number = let is_even item = Some (item mod 2 = 0) in is_even number
   > EOF
   $ lexeme predicates.ml
+  predicates.ml:2:15: note[boolean-parameter] value: this parameter is a Boolean, so could a variant type name its cases?
   predicates.ml:3:5: error[predicate-result] has_value: this predicate should return a Boolean, but it returns int
   predicates.ml:4:5: error[predicate-result] does_apply: this predicate should return a Boolean, but it returns int
   predicates.ml:5:23: note[predicate-state] is_even: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.

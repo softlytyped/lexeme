@@ -206,6 +206,7 @@ let has_value value : int = value|};
   [%expect
     {|
     1:5 predicate-state is_ready
+    1:14 boolean-parameter value
     2:5 predicate-state does_accept
     3:5 predicate-result has_value
     |}]
@@ -272,7 +273,7 @@ val size_of : int list -> int|};
 
 let%expect_test "an inferred type names a function as a written one does" =
   show {|let matches left right = left = right
-let report count = ignore count|};
+let report count = ignore (count : int)|};
   [%expect {| 1:5 predicate-name matches |}]
 ;;
 
@@ -306,7 +307,9 @@ let%expect_test "a constructor names data with a noun phrase" =
 (* A function of [lines] lines of code, with a blank line and a comment between each,
    which do not count. *)
 let function_of_length lines =
-  let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore 0;\n\n  (* a step *)\n") in
+  let steps =
+    List.init (lines - 2) ~f:(fun _ -> "  ignore (0 : int);\n\n  (* a step *)\n")
+  in
   "let apply () =\n" ^ String.concat steps ^ "  ()\n"
 ;;
 
@@ -324,7 +327,7 @@ let%expect_test "a function past each limit earns a note, a warning and then an 
 
 let%expect_test "an inline test has five more lines at each limit" =
   let test_of_length lines =
-    let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore 0;\n") in
+    let steps = List.init (lines - 2) ~f:(fun _ -> "  ignore (0 : int);\n") in
     "let%expect_test \"example\" =\n" ^ String.concat steps ^ "  ()\n"
   in
   List.iter [ 15; 16 ] ~f:(fun lines -> show (test_of_length lines));
@@ -358,9 +361,13 @@ let choose flag = if flag then 1 else 0
 let compare first second = if first then 1 else if second then 2 else 3|};
   [%expect
     {|
+    1:12 boolean-parameter flag
     1:19 lone-boolean-match match
     1:19 boolean-match match
+    2:12 boolean-parameter flag
     3:5 if-else compare
+    3:13 boolean-parameter first
+    3:19 boolean-parameter second
     |}]
 ;;
 
@@ -369,8 +376,12 @@ let%expect_test "a match on several Booleans is an error, and on one a note" =
     {|let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3
 let pick flag value = match flag, value with true, Some _ -> 1 | _ -> 0
 let count items = match items with [] -> 0 | _ :: _ -> 1|};
-  [%expect {|
+  [%expect
+    {|
+    1:14 boolean-parameter first
+    1:20 boolean-parameter second
     1:29 boolean-tuple match
+    2:10 boolean-parameter flag
     2:23 boolean-match match
     |}]
 ;;
@@ -398,11 +409,11 @@ let check items =
 
 let%expect_test "a Boolean match within another Boolean decision asks for a variant type" =
   show
-    {|let classify first second =
+    {|let classify (first, second) =
   match first with
   | true -> (match second with true -> 1 | false -> 2)
   | false -> 3
-let label flag items = if flag then (match items with [] -> 0 | _ -> 1) else 2|};
+let label (flag, items) = if flag then (match items with [] -> 0 | _ -> 1) else 2|};
   [%expect
     {|
     2:3 boolean-match match
@@ -463,17 +474,28 @@ let entry_of item = item|};
     |}]
 ;;
 
-let%expect_test "each rule on Boolean conditions explains itself" =
+let%expect_test "each rule on Boolean matches explains itself" =
   print
     {|let decide flag = match flag with true -> 1 | false -> 0
-let compare first second = if first then 1 else if second then 2 else 3
 let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3|};
   [%expect
     {|
+    input.ml:1:12: note[boolean-parameter] flag: this parameter is a Boolean, so could a variant type name its cases?
     input.ml:1:19: warning[lone-boolean-match] match: this match is the only Boolean condition of its function, so use if-then-else
     input.ml:1:19: note[boolean-match] match: could a variant type name the cases of this Boolean?
-    input.ml:2:5: warning[if-else] compare: this function has if-then-else on lines 2, 2, so use pattern matching for all but one
-    input.ml:3:29: error[boolean-tuple] match: this match takes 2 Booleans at once, so parse, don't validate, with a variant type
+    input.ml:2:14: note[boolean-parameter] first: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:2:20: note[boolean-parameter] second: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:2:29: error[boolean-tuple] match: this match takes 2 Booleans at once, so parse, don't validate, with a variant type
+    |}]
+;;
+
+let%expect_test "each rule on if-then-else and Boolean parameters explains itself" =
+  print {|let compare first second = if first then 1 else if second then 2 else 3|};
+  [%expect
+    {|
+    input.ml:1:5: warning[if-else] compare: this function has if-then-else on lines 1, 1, so use pattern matching for all but one
+    input.ml:1:13: note[boolean-parameter] first: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:1:19: note[boolean-parameter] second: this parameter is a Boolean, so could a variant type name its cases?
     |}]
 ;;
 
@@ -484,6 +506,8 @@ let classify first second = match first with true -> (match second with true -> 
   [%expect
     {|
     input.ml:1:56: note[late-guard] match: this guard clause comes after unrelated work, so could it come first?
+    input.ml:2:14: note[boolean-parameter] first: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:2:20: note[boolean-parameter] second: this parameter is a Boolean, so could a variant type name its cases?
     input.ml:2:29: note[boolean-match] match: could a variant type name the cases of this Boolean?
     input.ml:2:54: note[boolean-match] match: could a variant type name the cases of this Boolean?
     input.ml:2:54: warning[nested-boolean] match: this conditional on Booleans lies within another, so parse, don't validate, with a variant type
@@ -533,7 +557,10 @@ let%expect_test "a let that binds a pipeline mixes two styles, but a pipeline ma
 let join words =
   let separator = " " in
   words |> List.map ~f:String.lowercase |> String.concat ~sep:separator|};
-  [%expect {| 2:7 let-pipeline let |}]
+  [%expect {|
+    2:7 let-pipeline let
+    2:19 one-stage-pipeline |>
+    |}]
 ;;
 
 let%expect_test "a let that reads no result of the binds before it could come before them"
@@ -570,8 +597,114 @@ let count_of value =
   let%map.Option count = value in
   count >>| succ
 let length_of value = value >>= lookup >>| String.length|};
-  [%expect {|
+  [%expect
+    {|
     1:5 mixed-notation total_of
+    3:20 eta-expansion fun
     4:5 mixed-notation count_of
+    |}]
+;;
+
+let%expect_test "a pipeline of one stage could be a plain application" =
+  show
+    {|let spell words = words |> List.rev
+let join words = words |> List.rev |> String.concat ""|};
+  [%expect {| 1:19 one-stage-pipeline |> |}]
+;;
+
+let%expect_test "an if-then-else whose branches are Booleans is its condition" =
+  show
+    {|let check ready = if ready then true else false
+let flip ready = if ready then false else true
+let pick ready = if ready then 1 else 0|};
+  [%expect
+    {|
+    1:5 predicate-name check
+    1:11 boolean-parameter ready
+    1:19 boolean-branches if
+    2:5 predicate-name flip
+    2:10 boolean-parameter ready
+    2:18 boolean-branches if
+    3:10 boolean-parameter ready
+    |}]
+;;
+
+let%expect_test "a function that applies a function to its parameter is that function" =
+  show
+    {|let spell words = List.map (fun word -> String.lowercase_ascii word) words
+let pair words = List.map (fun word -> word, word) words
+let mark words = List.map (fun word -> word ^ word) words|};
+  [%expect {| 1:28 eta-expansion fun |}]
+;;
+
+let%expect_test "a function with one case could be fun" =
+  show
+    {|let head_of = function (head, _) -> head
+let size = function [] -> 0 | _ :: _ -> 1|};
+  [%expect {| 1:15 one-case-function function |}]
+;;
+
+let%expect_test "ignore gives the type of what it ignores" =
+  show {|let run action = ignore (action ())
+let start action = ignore (action () : int)|};
+  [%expect {| 1:18 untyped-ignore ignore |}]
+;;
+
+let%expect_test "a length compared with zero could be is_empty" =
+  show
+    {|let is_blank words = List.length words = 0
+let has_text text = 0 < String.length text
+let is_long words = List.length words > 3|};
+  [%expect {|
+    1:22 length-comparison =
+    2:21 length-comparison <
+    |}]
+;;
+
+let%expect_test "a named function's Boolean parameter could be a variant" =
+  show
+    {|let paint ~glow colour = if glow then colour else 0
+let shade colour = List.filter (fun mark -> mark) colour|};
+  [%expect {| 1:12 boolean-parameter glow |}]
+;;
+
+let%expect_test "an anonymous function within two others" =
+  show
+    {|let count rows =
+  List.map (fun row -> 1 + List.length (List.filter (fun cells -> not (List.exists (fun cell -> cell > 0) cells)) row)) rows
+let shift rows =
+  List.map (fun row -> List.length (List.map (fun cells -> let increase digits = List.map (fun digit -> digit + 1) digits in increase cells) row)) rows|};
+  [%expect {| 2:84 nested-function fun |}]
+;;
+
+let%expect_test "each idiom of a function's shape explains itself" =
+  print
+    {|let total items = items |> List.length
+let check ready = if ready then true else false
+let spell words = List.map (fun word -> String.lowercase_ascii word) words
+let head_of = function (head, _) -> head|};
+  [%expect
+    {|
+    input.ml:1:19: note[one-stage-pipeline] |>: this pipeline has one stage, so could it be a plain application?
+    input.ml:2:5: error[predicate-name] check: this name should be a predicate, such as is_empty or has_entries, because the function returns a Boolean
+    input.ml:2:11: note[boolean-parameter] ready: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:2:19: warning[boolean-branches] if: the branches of this if-then-else are true and false, so the expression is its condition, or the negation of it
+    input.ml:3:28: note[eta-expansion] fun: this anonymous function applies a function to its parameter and does nothing else, so could it be that function itself?
+    input.ml:4:15: note[one-case-function] function: this function has one case, so could fun take its pattern?
+    |}]
+;;
+
+let%expect_test "each idiom of a function's values explains itself" =
+  print
+    {|let run action = ignore (action ())
+let is_blank words = List.length words = 0
+let paint ~glow colour = if glow then colour else 0
+let count rows = List.map (fun row -> 1 + List.length (List.filter (fun cells -> not (List.exists (fun cell -> cell > 0) cells)) row)) rows|};
+  [%expect
+    {|
+    input.ml:1:18: warning[untyped-ignore] ignore: this ignore has no type annotation, so a partial application could pass through it unseen; could it be ignore (value : type)?
+    input.ml:2:22: note[length-comparison] =: this compares a length with zero, so could is_empty, which for a list stops at the first element, take its place?
+    input.ml:3:12: note[boolean-parameter] glow: this parameter is a Boolean, so could a variant type name its cases?
+    input.ml:4:99: note[nested-function] fun: this anonymous function is within two others, so could a let name one of them?
     |}]
 ;;

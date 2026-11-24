@@ -40,11 +40,12 @@ module Limits = struct
   (* The bounds past which a definition earns each severity, the most severe first. *)
   let bounds_of limits role =
     let allowance = allowance_of limits role in
-    [ Diagnostic.Severity.Error, limits.error
-    ; Warning, limits.warning
-    ; Note, limits.note
-    ]
-    |> List.map ~f:(fun (severity, bound) -> severity, bound + allowance)
+    List.map
+      [ Diagnostic.Severity.Error, limits.error
+      ; Warning, limits.warning
+      ; Note, limits.note
+      ]
+      ~f:(fun (severity, bound) -> severity, bound + allowance)
   ;;
 end
 
@@ -199,8 +200,9 @@ let decide decision =
 let scope_with findings = Scope { findings; decisions = []; notations = [] }
 
 let lines_of sites =
-  List.map sites ~f:(fun site -> Int.to_string (Source.Site.line_of site))
-  |> String.concat ~sep:", "
+  String.concat
+    ~sep:", "
+    (List.map sites ~f:(fun site -> Int.to_string (Source.Site.line_of site)))
 ;;
 
 let access field_access = scope_with [ Diagnostic.of_access field_access ]
@@ -256,6 +258,7 @@ let chain links =
 ;;
 
 let sequence notation = Scope { findings = []; decisions = []; notations = [ notation ] }
+let express idiom = scope_with [ Diagnostic.of_idiom idiom ]
 
 let several_conditionals_of binding conditionals =
   match conditionals with
@@ -369,6 +372,7 @@ let algebra_in context =
   ; access
   ; chain
   ; sequence
+  ; express
   ; enclose = (fun children -> Scope (scope_of children))
   ; define = define context
   }

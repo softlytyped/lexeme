@@ -31,6 +31,7 @@ let algebra : Sexp.t Syntax.algebra =
   ; sequence =
       (fun notation ->
         [%sexp (Notation.Operation.name_of (Notation.operation_of notation) : string)])
+  ; express = (fun idiom -> [%sexp (Idiom.form_of idiom : Idiom.Form.t)])
   ; enclose = (fun children -> Sexp.List children)
   ; define = definition_of
   }
