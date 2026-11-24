@@ -92,7 +92,10 @@ let run value =
   let%bind count = value in
   let entries_at items = count :: items in
   entries_at [ count ]|};
-  [%expect {| 7:7 plural-lift entries_at |}]
+  [%expect {|
+    6:12 lone-bind let%bind
+    7:7 plural-lift entries_at
+    |}]
 ;;
 
 let%expect_test "a letter exception belongs to the marked binder alone" =
@@ -517,5 +520,58 @@ let buckets_of { Hashtbl.num_buckets; _ } = num_buckets|};
   [%expect {|
     1:16 field-name across
     2:5 function-name across_of
+    |}]
+;;
+
+let%expect_test "a let that binds a pipeline mixes two styles, but a pipeline may end \
+                 the chain"
+  =
+  show
+    {|let spell words =
+  let spellings = words |> List.map ~f:String.lowercase in
+  String.concat spellings
+let join words =
+  let separator = " " in
+  words |> List.map ~f:String.lowercase |> String.concat ~sep:separator|};
+  [%expect {| 2:7 let-pipeline let |}]
+;;
+
+let%expect_test "a let that reads no result of the binds before it could come before them"
+  =
+  show
+    {|let total_of value =
+  let%bind count = value in
+  let total = count + 1 in
+  let limit = 10 in
+  return (total + limit)|};
+  [%expect {| 4:7 late-let let |}]
+;;
+
+let%expect_test "a lone bind between plain lets" =
+  show
+    {|let total_of value =
+  let start = value + 1 in
+  let%bind count = lookup start in
+  let total = count + start in
+  return total
+let count_of value =
+  let start = value + 1 in
+  let%bind count = lookup start in
+  return count|};
+  [%expect {| 3:12 lone-bind let%bind |}]
+;;
+
+let%expect_test "a function writes each of a monad's operations in one notation" =
+  show
+    {|let total_of value =
+  let%bind count = value in
+  lookup count >>= fun total -> return total
+let count_of value =
+  let%map.Option count = value in
+  count >>| succ
+let length_of value = value >>= lookup >>| String.length|};
+  [%expect {|
+    1:5 mixed-notation total_of
+    4:5 mixed-notation count_of
     |}]
 ;;

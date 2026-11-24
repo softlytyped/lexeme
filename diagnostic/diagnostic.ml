@@ -158,12 +158,51 @@ module Rule = struct
     ;;
   end
 
+  module Chain = struct
+    type t =
+      | Let_pipeline
+      | Late_let
+      | Lone_bind
+
+    let code_of = function
+      | Let_pipeline -> "let-pipeline"
+      | Late_let -> "late-let"
+      | Lone_bind -> "lone-bind"
+    ;;
+
+    let pipeline_message =
+      "this let binds the result of a pipeline, so the chain mixes two styles; could the \
+       pipeline end the chain as its result, or each of its steps have a let of its own?"
+    ;;
+
+    let late_let_message =
+      "this let reads nothing that the binds before it give, so could it come before \
+       them?"
+    ;;
+
+    let lone_bind_message =
+      "this bind is the only one in its chain, and plain lets stand on both sides of it, \
+       so could the chain open or close with it?"
+    ;;
+
+    let message_of = function
+      | Let_pipeline -> pipeline_message
+      | Late_let -> late_let_message
+      | Lone_bind -> lone_bind_message
+    ;;
+  end
+
   type t =
     | Name of Name.t
     | Answer of Answer.t
     | Branch of Branch.t
     | Plural_lift of Binding.t
     | Field_access of Access.t
+    | Chain of Chain.t
+    | Mixed_notation of
+        { operation : Notation.Operation.t
+        ; lines : string
+        }
     | Function_length of
         { lines : int
         ; bound : int
@@ -174,8 +213,8 @@ module Rule = struct
     | Name _ -> Severity.Error
     | Answer answer -> Answer.severity_of answer
     | Branch branch -> Branch.severity_of branch
-    | Plural_lift _ -> Note
-    | Field_access _ -> Warning
+    | Plural_lift _ | Chain _ -> Note
+    | Field_access _ | Mixed_notation _ -> Warning
     | Function_length { severity; _ } -> severity
   ;;
 
@@ -185,6 +224,8 @@ module Rule = struct
     | Branch branch -> Branch.code_of branch
     | Plural_lift _ -> "plural-lift"
     | Field_access _ -> "field-access"
+    | Chain chain -> Chain.code_of chain
+    | Mixed_notation _ -> "mixed-notation"
     | Function_length _ -> "function-length"
   ;;
 
@@ -208,6 +249,14 @@ module Rule = struct
       line
   ;;
 
+  let notation_message_of operation lines =
+    sprintf
+      "this function writes %s both as an infix operator and as a let, on lines %s, so \
+       keep to one notation"
+      (Notation.Operation.name_of operation)
+      lines
+  ;;
+
   let length_message_of lines bound =
     sprintf "this definition has %d source lines of code, more than %d" lines bound
   ;;
@@ -218,6 +267,8 @@ module Rule = struct
     | Branch branch -> Branch.message_of branch
     | Plural_lift singular -> lift_message_of singular
     | Field_access access -> access_message_of access
+    | Chain chain -> Chain.message_of chain
+    | Mixed_notation { operation; lines } -> notation_message_of operation lines
     | Function_length { lines; bound; _ } -> length_message_of lines bound
   ;;
 end
@@ -239,6 +290,10 @@ let of_access access =
     ~site:(Access.site_of access)
     ~subject:(Access.field_of access)
     (Field_access access)
+;;
+
+let of_link link =
+  create ~site:(Chain.Link.site_of link) ~subject:(Chain.Link.keyword_of link)
 ;;
 
 let of_decision decision =

@@ -4,9 +4,11 @@
   access
   binding
   branching
+  chain
   core
   decision
   merlin-lib.ocaml_parsing
+  notation
   session
   source
   syntax

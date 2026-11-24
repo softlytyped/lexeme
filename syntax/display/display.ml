@@ -21,10 +21,16 @@ let definition_of binding children =
     , (children : Sexp.t list)]
 ;;
 
+let keywords_of links = List.map (Chain.links_of links) ~f:Chain.Link.keyword_of
+
 let algebra : Sexp.t Syntax.algebra =
   { declare = declaration_of
   ; decide = (fun decision -> [%sexp (Decision.keyword_of decision : string)])
   ; access = (fun access -> [%sexp "access", (Access.field_of access : string)])
+  ; chain = (fun links -> [%sexp "chain", (keywords_of links : string list)])
+  ; sequence =
+      (fun notation ->
+        [%sexp (Notation.Operation.name_of (Notation.operation_of notation) : string)])
   ; enclose = (fun children -> Sexp.List children)
   ; define = definition_of
   }

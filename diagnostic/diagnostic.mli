@@ -62,6 +62,16 @@ module Rule : sig
           condition. *)
   end
 
+  module Chain : sig
+    (** A rule of chains says how a chain of local definitions mixes its styles. *)
+    type t =
+      | Let_pipeline (** [Let_pipeline] is a let that binds the result of a pipeline. *)
+      | Late_let
+      (** [Late_let] is a plain let after a bind whose result it does not read. *)
+      | Lone_bind
+      (** [Lone_bind] is the only bind of its chain, with plain lets on both sides of it. *)
+  end
+
   type t =
     | Name of Name.t
     | Answer of Answer.t
@@ -71,6 +81,13 @@ module Rule : sig
     | Field_access of Access.t
     (** [Field_access access] reads a field of a record defined by another compilation
         unit. *)
+    | Chain of Chain.t
+    | Mixed_notation of
+        { operation : Notation.Operation.t
+        ; lines : string
+        }
+    (** [Mixed_notation] is a function that writes one of a monad's operations both as an
+        infix operator and as a let, on the given lines. *)
     | Function_length of
         { lines : int
         ; bound : int
@@ -99,6 +116,7 @@ val of_access : Access.t -> t
 
 val of_binding : Binding.t -> Rule.t -> t
 val of_decision : Decision.t -> Rule.t -> t
+val of_link : Chain.Link.t -> Rule.t -> t
 val severity_of : t -> Severity.t
 
 (** [code_of diagnostic] returns the code of the diagnostic's rule, such as

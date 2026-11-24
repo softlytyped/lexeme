@@ -228,6 +228,123 @@ let decision_of context expression =
     ~nesting:(nesting_of context extent)
 ;;
 
+let site_at context location =
+  Source.site_at
+    context.source
+    ~offset:(Source.Extent.start_of (Session.extent_of location))
+;;
+
+(* An extension such as [bind] or [bind.Option] names the operation of [let%bind]. *)
+let operation_of_extension name : Notation.Operation.t option =
+  match String.split name ~on:'.' with
+  | "bind" :: _ -> Some Bind
+  | "map" :: _ -> Some Map
+  | _ -> None
+;;
+
+let operation_of_operator operator : Notation.Operation.t option =
+  match operator with
+  | ">>=" | "let*" -> Some Bind
+  | ">>|" | "let+" -> Some Map
+  | _ -> None
+;;
+
+let sequence context location operation ~form =
+  Option.iter operation ~f:(fun operation ->
+    Syntax.Recorder.sequence
+      context.recorder
+      (Notation.create ~site:(site_at context location) ~operation ~form))
+;;
+
+let rec definition_of expression : Chain.Link.Definition.t =
+  match expression.pexp_desc with
+  | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident "|>"; _ }; _ }, _) -> Pipeline
+  | Pexp_constraint (body, _, _) -> definition_of body
+  | _ -> Other_expression
+;;
+
+let names_bound_by node =
+  let names = Queue.create () in
+  let bind (name : string Location.loc) = Queue.enqueue names name.txt in
+  let iterator = { base with pat = pattern ~bind ~reach:ignore } in
+  iterator.pat iterator node;
+  Queue.to_list names
+;;
+
+(* An identifier of the expression's own module may name a local definition. *)
+let local_name_of node =
+  match node.pexp_desc with
+  | Pexp_ident { txt = Lident name; _ } -> Some name
+  | _ -> None
+;;
+
+let names_read_by expression =
+  let names = Queue.create () in
+  let gather (iterator : Ast_iterator.iterator) node =
+    Option.iter (local_name_of node) ~f:(Queue.enqueue names);
+    base.expr iterator node
+  in
+  let iterator = { base with expr = gather } in
+  iterator.expr iterator expression;
+  Queue.to_list names
+;;
+
+let link_of context ~keyword ~form pattern definition =
+  Chain.Link.create
+    ~site:(site_at context pattern.ppat_loc)
+    ~keyword
+    ~form
+    ~definition:(definition_of definition)
+    ~names:(names_bound_by pattern)
+    ~reads:(names_read_by definition)
+;;
+
+(* The links after the first in one [let] open with [and]. *)
+let keyword_at place ~keyword =
+  match place with
+  | 0 -> keyword
+  | _ -> "and"
+;;
+
+(* A link of a chain of [let]s declares its names. *)
+let links_of_definitions context iterator definitions ~keyword ~form =
+  List.mapi definitions ~f:(fun place definition ->
+    iterator.Ast_iterator.value_binding iterator definition;
+    let keyword = keyword_at place ~keyword in
+    link_of context ~keyword ~form definition.pvb_pat definition.pvb_expr)
+;;
+
+let links_of_plain_let context iterator definitions =
+  links_of_definitions context iterator definitions ~keyword:"let" ~form:Plain_binding
+;;
+
+let links_of_extension context iterator (extension : string Location.loc) definitions =
+  sequence context extension.loc (operation_of_extension extension.txt) ~form:Let_syntax;
+  let keyword = "let%" ^ extension.txt in
+  links_of_definitions context iterator definitions ~keyword ~form:Monad_binding
+;;
+
+let link_of_operator context (iterator : Ast_iterator.iterator) binding_operator =
+  let pattern = binding_operator.pbop_pat
+  and definition = binding_operator.pbop_exp in
+  iterator.pat iterator pattern;
+  iterator.expr iterator definition;
+  let keyword = binding_operator.pbop_op.txt in
+  link_of context ~keyword ~form:Monad_binding pattern definition
+;;
+
+let links_of_operators context iterator operation =
+  let operator = operation.let_.pbop_op in
+  sequence context operator.loc (operation_of_operator operator.txt) ~form:Let_syntax;
+  List.map (operation.let_ :: operation.ands) ~f:(link_of_operator context iterator)
+;;
+
+let close context links =
+  match links with
+  | [] -> ()
+  | _ :: _ -> Syntax.Recorder.chain context.recorder (Chain.create links)
+;;
+
 (* A field that an expression reads or updates is an access. A record built in full names
    each of its fields, as a constructor names its arguments, so it reads none of them. *)
 let observe context expression =
@@ -235,6 +352,8 @@ let observe context expression =
   | Pexp_field (_, field) | Pexp_setfield (_, field, _) -> reach context field
   | Pexp_record (fields, Some _) ->
     List.iter fields ~f:(fun (field, _) -> reach context field)
+  | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident name; loc = location }; _ }, _) ->
+    sequence context location (operation_of_operator name) ~form:Infix_operator
   | _ -> ()
 ;;
 
@@ -246,30 +365,55 @@ let visit context (iterator : Ast_iterator.iterator) expression =
   base.expr iterator expression
 ;;
 
-(* A link of a chain of [let]s declares its names and gives the rest of the chain. *)
-let after_definitions (iterator : Ast_iterator.iterator) definitions ~rest =
-  List.iter definitions ~f:(iterator.value_binding iterator);
-  rest
-;;
+(* A step along a chain of [let]s, where [let%bind] is the extension [bind] around a
+   [let], and the chain ends at its body. *)
+module Step = struct
+  type t =
+    | Plain_let of value_binding list * expression
+    | Extended_let of string Location.loc * value_binding list * expression
+    | Operator_let of letop
+    | Extension of expression
+    | Body
 
-let after_operations (iterator : Ast_iterator.iterator) operation =
-  List.iter (operation.let_ :: operation.ands) ~f:(fun binding_operator ->
-    iterator.pat iterator binding_operator.pbop_pat;
-    iterator.expr iterator binding_operator.pbop_exp);
-  operation.body
+  let of_extension extension body =
+    match body.pexp_desc with
+    | Pexp_let (_, _, definitions, rest) -> Extended_let (extension, definitions, rest)
+    | _ -> Extension body
+  ;;
+
+  let of_expression expression =
+    match expression.pexp_desc with
+    | Pexp_let (_, _, definitions, rest) -> Plain_let (definitions, rest)
+    | Pexp_letop operation -> Operator_let operation
+    | Pexp_extension (extension, PStr [ { pstr_desc = Pstr_eval (body, _); _ } ]) ->
+      of_extension extension body
+    | _ -> Body
+  ;;
+end
+
+(* Each step declares the names of its links and gives the rest of the chain. *)
+let links_at context iterator : Step.t -> _ = function
+  | Plain_let (definitions, rest) ->
+    Some (links_of_plain_let context iterator definitions, rest)
+  | Extended_let (extension, definitions, rest) ->
+    Some (links_of_extension context iterator extension definitions, rest)
+  | Operator_let operation ->
+    Some (links_of_operators context iterator operation, operation.body)
+  | Extension body -> Some ([], body)
+  | Body -> None
 ;;
 
 (* A chain of [let]s declares its names in one scope, so that each declaration meets its
-   siblings, even those declared after it. *)
-let rec descend context (iterator : Ast_iterator.iterator) expression =
-  match expression.pexp_desc with
-  | Pexp_let (_, _, definitions, rest) ->
-    descend context iterator (after_definitions iterator definitions ~rest)
-  | Pexp_letop operation -> descend context iterator (after_operations iterator operation)
-  | Pexp_extension (_, PStr [ { pstr_desc = Pstr_eval (body, _); _ } ]) ->
-    descend context iterator body
-  | _ -> visit context iterator expression
+   siblings, even those declared after it. We gather its links on the way to its body. *)
+let rec follow context iterator expression ~links =
+  match links_at context iterator (Step.of_expression expression) with
+  | Some (more_links, rest) -> follow context iterator rest ~links:(links @ more_links)
+  | None ->
+    close context links;
+    visit context iterator expression
 ;;
+
+let descend context iterator expression = follow context iterator expression ~links:[]
 
 let unwrap (iterator : Ast_iterator.iterator) = function
   | PStr items -> base.structure iterator items

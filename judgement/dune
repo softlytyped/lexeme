@@ -1,5 +1,15 @@
 (library
  (name judgement)
- (libraries binding core decision diagnostic grammar lexicon source syntax)
+ (libraries
+  binding
+  chain
+  core
+  decision
+  diagnostic
+  grammar
+  lexicon
+  notation
+  source
+  syntax)
  (preprocess
   (pps ppx_jane)))

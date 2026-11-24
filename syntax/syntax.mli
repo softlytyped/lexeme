@@ -1,9 +1,10 @@
-(** The syntax of a source: the free monad over five operations, which all answer [unit].
-    [declare] binds a name in the current scope, [decide] branches, and [access] reads a
-    field of a record that another compilation unit defines. [enclose] and [define] are
-    scoped: [enclose] runs a computation in a lexical block of its own, and [define]
-    declares a function and runs its body. A reader writes a source file as a program, and
-    a check is an algebra for the program's fold. *)
+(** The syntax of a source: the free monad over seven operations, which all answer [unit].
+    [declare] binds a name in the current scope, [decide] branches, [access] uses a record
+    field that another compilation unit defines, [chain] links local definitions, and
+    [sequence] uses a monad's bind or map. [enclose] and [define] are scoped: [enclose]
+    runs a computation in a lexical block of its own, and [define] declares a function and
+    runs its body. A front end writes a source file as a program, and a check is an
+    algebra for the program's fold. *)
 
 open! Core
 
@@ -14,6 +15,8 @@ include Monad.S with type 'a t := 'a t
 val declare : Binding.t -> unit t
 val decide : Decision.t -> unit t
 val access : Access.t -> unit t
+val chain : Chain.t -> unit t
+val sequence : Notation.t -> unit t
 val enclose : unit t -> unit t
 val define : Binding.t -> unit t -> unit t
 
@@ -24,6 +27,8 @@ module Recorder : sig
   val declare : t -> Binding.t -> unit
   val decide : t -> Decision.t -> unit
   val access : t -> Access.t -> unit
+  val chain : t -> Chain.t -> unit
+  val sequence : t -> Notation.t -> unit
 
   (** Runs a traversal of one scope. *)
   val enclose : t -> (unit -> unit) -> unit
@@ -39,6 +44,8 @@ type 'result algebra =
   { declare : Binding.t -> 'result
   ; decide : Decision.t -> 'result
   ; access : Access.t -> 'result
+  ; chain : Chain.t -> 'result
+  ; sequence : Notation.t -> 'result
   ; enclose : 'result list -> 'result
   ; define : Binding.t -> 'result list -> 'result
   }

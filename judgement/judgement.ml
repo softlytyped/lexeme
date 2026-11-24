@@ -64,6 +64,7 @@ type declaration =
 type scope =
   { findings : Diagnostic.t list
   ; decisions : Decision.t list
+  ; notations : Notation.t list
   }
 
 type t =
@@ -192,10 +193,10 @@ let placement_rules_of decision =
 let decide decision =
   let rules = form_rules_of (Decision.form_of decision) @ placement_rules_of decision in
   let findings = List.map rules ~f:(Diagnostic.of_decision decision) in
-  Scope { findings; decisions = [ decision ] }
+  Scope { findings; decisions = [ decision ]; notations = [] }
 ;;
 
-let scope_with findings = Scope { findings; decisions = [] }
+let scope_with findings = Scope { findings; decisions = []; notations = [] }
 
 let lines_of sites =
   List.map sites ~f:(fun site -> Int.to_string (Source.Site.line_of site))
@@ -203,6 +204,58 @@ let lines_of sites =
 ;;
 
 let access field_access = scope_with [ Diagnostic.of_access field_access ]
+let is_plain link = Chain.Link.Form.equal (Chain.Link.form_of link) Plain_binding
+
+let pipeline_rules_of links =
+  List.filter_map links ~f:(fun link ->
+    match Chain.Link.definition_of link with
+    | Pipeline -> Some (link, Rule.Chain Let_pipeline)
+    | Other_expression -> None)
+;;
+
+(* A link depends on a bind when it binds, or when its definition reads a name that
+   depends on a bind. *)
+let is_dependent dependents link =
+  match Chain.Link.form_of link with
+  | Monad_binding -> true
+  | Plain_binding -> List.exists (Chain.Link.reads_of link) ~f:(Set.mem dependents)
+;;
+
+let with_names dependents link =
+  Set.union dependents (String.Set.of_list (Chain.Link.names_of link))
+;;
+
+(* A plain let after the first bind that depends on no bind could come before them all. *)
+let late_lets_of links =
+  List.drop_while links ~f:is_plain
+  |> List.folding_map ~init:String.Set.empty ~f:(fun dependents link ->
+    if is_dependent dependents link
+    then with_names dependents link, None
+    else dependents, Some (link, Rule.Chain Late_let))
+  |> List.filter_opt
+;;
+
+let has_plain_ends links =
+  match links, List.last links with
+  | first :: _, Some last -> is_plain first && is_plain last
+  | [], _ | _, None -> false
+;;
+
+(* A lone bind stands between plain lets when its chain opens and closes with them. *)
+let lone_binds_of links =
+  match List.filter links ~f:(Fn.non is_plain) with
+  | [ bind ] when has_plain_ends links -> [ bind, Rule.Chain Lone_bind ]
+  | _ -> []
+;;
+
+let chain links =
+  let links = Chain.links_of links in
+  List.concat [ pipeline_rules_of links; late_lets_of links; lone_binds_of links ]
+  |> List.map ~f:(fun (link, rule) -> Diagnostic.of_link link rule)
+  |> scope_with
+;;
+
+let sequence notation = Scope { findings = []; decisions = []; notations = [ notation ] }
 
 let several_conditionals_of binding conditionals =
   match conditionals with
@@ -230,6 +283,25 @@ let body_rules_of binding (decisions : Decision.t list) =
   let conditionals = of_form Conditional in
   several_conditionals_of binding conditionals
   @ lone_matches_of conditionals (of_form Boolean_match)
+;;
+
+let has_both_forms uses =
+  let forms = List.map uses ~f:Notation.form_of in
+  List.mem forms Infix_operator ~equal:Notation.Form.equal
+  && List.mem forms Let_syntax ~equal:Notation.Form.equal
+;;
+
+(* A function writes each of a monad's operations in one form. *)
+let notation_rules_of binding notations =
+  List.filter_map Notation.Operation.all ~f:(fun operation ->
+    let uses =
+      List.filter notations ~f:(fun use ->
+        Notation.Operation.equal (Notation.operation_of use) operation)
+    in
+    let lines = lines_of (List.map uses ~f:Notation.site_of) in
+    Option.some_if
+      (has_both_forms uses)
+      (Diagnostic.of_binding binding (Mixed_notation { operation; lines })))
 ;;
 
 let with_declaration declarations binding =
@@ -265,7 +337,7 @@ let findings_in declarations = function
     with_declaration declarations binding, diagnostics @ notes
 ;;
 
-(* A scope's decisions belong to the function body that holds it. *)
+(* A scope's decisions and uses of a monad belong to the function body that holds it. *)
 let body_facts_of children ~facts_of =
   List.concat_map children ~f:(function
     | Declaration _ -> []
@@ -277,13 +349,16 @@ let scope_of children =
   let findings = List.folding_map children ~init:declarations ~f:findings_in in
   { findings = List.concat findings
   ; decisions = body_facts_of children ~facts_of:(fun scope -> scope.decisions)
+  ; notations = body_facts_of children ~facts_of:(fun scope -> scope.notations)
   }
 ;;
 
 let define context binding children =
   let declaration = declaration_of context binding in
   let body = scope_of children in
-  let body_rules = body_rules_of binding body.decisions in
+  let body_rules =
+    body_rules_of binding body.decisions @ notation_rules_of binding body.notations
+  in
   let diagnostics = List.concat [ declaration.diagnostics; body_rules; body.findings ] in
   Declaration { declaration with diagnostics }
 ;;
@@ -292,6 +367,8 @@ let algebra_in context =
   { Syntax.declare = (fun binding -> Declaration (declaration_of context binding))
   ; decide
   ; access
+  ; chain
+  ; sequence
   ; enclose = (fun children -> Scope (scope_of children))
   ; define = define context
   }
