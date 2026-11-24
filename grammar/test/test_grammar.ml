@@ -50,9 +50,11 @@ let%expect_test "an auxiliary verb opens a predicate" =
 ;;
 
 let%expect_test "a predicate's complement must fit its auxiliary" =
-  show [ "does_test_and_set"; "does_matrix" ];
-  [%expect {|
+  show [ "does_test_and_set"; "does_drain_into"; "does_matrix" ];
+  [%expect
+    {|
     (does_test_and_set (Predicate) ())
+    (does_drain_into (Predicate) ())
     (does_matrix () ())
     |}]
 ;;

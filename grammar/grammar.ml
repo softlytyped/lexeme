@@ -222,9 +222,22 @@ module Reading = struct
   [@@deriving equal, sexp_of]
 end
 
+let is_object grammar words =
+  List.is_empty words || Phrase.does_match grammar.nominal words
+;;
+
+(* A verb phrase may end in a prepositional phrase, as in [drain_into], whether it names a
+   command or follows a modal verb, as in [does_drain_into]. *)
+let is_verbal grammar words =
+  match List.split_while words ~f:(Fn.non is_preposition) with
+  | verbs, [] -> Phrase.does_match grammar.verb_phrase verbs
+  | verbs, _ :: rest ->
+    Phrase.does_match grammar.verb_phrase verbs && is_object grammar rest
+;;
+
 let is_complement grammar ({ auxiliary; complement } : Name.predicate) =
   match auxiliary, complement with
-  | Modal, _ -> Phrase.does_match grammar.verb_phrase complement
+  | Modal, _ -> is_verbal grammar complement
   | Possession, _ -> Phrase.does_match grammar.nominal complement
   | Copula, first :: rest when is_preposition first ->
     Phrase.does_match grammar.nominal rest
@@ -256,18 +269,7 @@ let singulars_of grammar (name : Name.t) =
 ;;
 
 let is_noun_phrase grammar (name : Name.t) = Phrase.does_match grammar.nominal name.words
-
-let is_object grammar words =
-  List.is_empty words || Phrase.does_match grammar.nominal words
-;;
-
-(* A verb phrase may end in a prepositional phrase, as in [drain_into]. *)
-let is_verb_phrase grammar (name : Name.t) =
-  match List.split_while name.words ~f:(Fn.non is_preposition) with
-  | verbs, [] -> Phrase.does_match grammar.verb_phrase verbs
-  | verbs, _ :: rest ->
-    Phrase.does_match grammar.verb_phrase verbs && is_object grammar rest
-;;
+let is_verb_phrase grammar (name : Name.t) = is_verbal grammar name.words
 
 let is_nominal grammar (name : Name.t) =
   match List.split_while name.words ~f:(Fn.non is_preposition) with
