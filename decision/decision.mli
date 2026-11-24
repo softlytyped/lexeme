@@ -1,13 +1,14 @@
-(** A conditional in a function body. *)
+(** A decision is a conditional in a function body. *)
 
 open! Core
 
 module Form : sig
   type t =
-    | Conditional (** [if], with or without [else] *)
-    | Boolean_match (** a match on one Boolean *)
+    | Conditional (** [Conditional] is an [if], with or without an [else]. *)
+    | Boolean_match (** [Boolean_match] is a pattern match on a single Boolean value. *)
     | Tuple_match of int
-    (** a match on a tuple, with the count of its Boolean components *)
+    (** [Tuple_match count] is a pattern match on a tuple, with the number of its Boolean
+        components. *)
     | Other_match
   [@@deriving equal]
 end
@@ -15,21 +16,33 @@ end
 module Placement : sig
   type t =
     | Late_position
-    (** a guard clause after work that neither its condition nor a branch uses *)
+    (** [Late_position] marks a guard clause that comes after unrelated work: neither its
+        condition nor its branches use the work before it. *)
     | Proper_position
 end
 
 module Nesting : sig
   type t =
     | Nested_position
-    (** within a branch of a Boolean condition of the same function body *)
+    (** [Nested_position] marks a decision within a branch of a Boolean condition of the
+        same function body. *)
     | Outer_position
 end
 
-type t =
-  { site : Source.Site.t
-  ; keyword : string (** such as [if] or [match], to name the decision *)
-  ; form : Form.t
-  ; placement : Placement.t
-  ; nesting : Nesting.t
-  }
+type t
+
+(** [create ~site ~keyword ~form ~placement ~nesting] returns a decision, named by its
+    keyword, such as [if] or [match]. *)
+val create
+  :  site:Source.Site.t
+  -> keyword:string
+  -> form:Form.t
+  -> placement:Placement.t
+  -> nesting:Nesting.t
+  -> t
+
+val site_of : t -> Source.Site.t
+val keyword_of : t -> string
+val form_of : t -> Form.t
+val placement_of : t -> Placement.t
+val nesting_of : t -> Nesting.t

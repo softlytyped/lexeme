@@ -34,10 +34,11 @@ type t =
   ; syntax_tree : Mreader.parsetree
   ; comments : Source.Comment.t list
   ; shapes : Codomain.t Lazy.t Shape.t Source.Extent.Map.t Or_error.t Lazy.t
+  ; owners : string Source.Extent.Map.t Or_error.t Lazy.t
   }
 
 let extent_of (location : Ocaml_parsing.Location.t) =
-  { Source.Extent.start = location.loc_start.pos_cnum; stop = location.loc_end.pos_cnum }
+  Source.Extent.create ~start:location.loc_start.pos_cnum ~stop:location.loc_end.pos_cnum
 ;;
 
 (* Base's and Core's fallible Booleans, where the environment knows those libraries. *)
@@ -103,7 +104,7 @@ let declaration_of = function
 
 (* The caller may judge a binding after another file has been read, so the codomain
    restores the compiler environment that owns its types. *)
-let shape_in pipeline environment description ~errors =
+let codomain_shape_of pipeline environment description ~errors =
   Shape.map (Shape.of_type environment description) ~f:(fun result ->
     lazy
       (Mpipeline.with_pipeline pipeline (fun () -> codomain_of environment result ~errors)))
@@ -120,25 +121,105 @@ let with_shape pipeline environment ~errors shapes (location, description) =
   if is_undetermined environment description ~errors
   then shapes
   else (
-    let shape = shape_in pipeline environment description ~errors in
+    let shape = codomain_shape_of pipeline environment description ~errors in
     Map.set shapes ~key:(extent_of location) ~data:shape)
 ;;
 
-let index_of pipeline typing =
-  let errors = lazy (not (List.is_empty (Mtyper.get_errors typing))) in
-  let rec visit environment node shapes =
+(* We visit each node of the typed tree with the environment that holds at it. *)
+let fold_over typing ~seed ~visit =
+  let rec descend environment node state =
     let environment = Node.node_update_env environment node in
-    let add = with_shape pipeline environment ~errors in
-    let shapes = Option.fold (declaration_of node) ~init:shapes ~f:add in
-    Node.fold_node visit environment node shapes
+    Node.fold_node descend environment node (visit environment node state)
   in
-  visit (Mtyper.initial_env typing) (root_of typing) Source.Extent.Map.empty
+  descend (Mtyper.initial_env typing) (root_of typing) seed
 ;;
 
-let shapes_of pipeline ~path =
+let shapes_in pipeline typing =
+  let errors = lazy (not (List.is_empty (Mtyper.get_errors typing))) in
+  fold_over typing ~seed:Source.Extent.Map.empty ~visit:(fun environment node shapes ->
+    Option.fold
+      (declaration_of node)
+      ~init:shapes
+      ~f:(with_shape pipeline environment ~errors))
+;;
+
+(* A field's name, with the description of its label, where a program reads the field,
+   writes it, builds a record with it, or matches it in a pattern. *)
+let written_labels_of fields =
+  Array.to_list fields
+  |> List.filter_map
+       ~f:(fun (label, _, (definition : Typedtree.record_label_definition)) ->
+         match definition with
+         | Overridden (lid, _) -> Some (lid.loc, label)
+         | Kept _ -> None)
+;;
+
+let labels_of = function
+  | Node.Expression { exp_desc = Texp_field { lid; label; _ }; _ }
+  | Node.Expression { exp_desc = Texp_setfield { lid; label; _ }; _ } ->
+    [ lid.loc, label ]
+  | Node.Expression { exp_desc = Texp_record { fields; _ }; _ } ->
+    written_labels_of fields
+  | Node.Pattern { pat_desc = Tpat_record (fields, _, _); _ } ->
+    List.map fields ~f:(fun (lid, label, _) -> lid.loc, label)
+  | _ -> []
+;;
+
+(* An installed library lies beside the standard library, whose directory holds
+   stdlib.cmi, so a module whose compiled interface lies elsewhere is the project's own. *)
+let standard_interface = "stdlib.cmi"
+let has_file directory file = Stdlib.Sys.file_exists (Filename.concat directory file)
+
+let library_directory_of directories =
+  List.find directories ~f:(fun directory -> has_file directory standard_interface)
+  |> Option.map ~f:Filename.dirname
+;;
+
+let is_built_here ~build_path:directories name =
+  let file = String.uncapitalize name ^ ".cmi" in
+  let libraries = library_directory_of directories in
+  let is_installed directory =
+    Option.exists libraries ~f:(fun libraries ->
+      String.is_prefix directory ~prefix:(Filename.concat libraries ""))
+  in
+  List.exists directories ~f:(fun directory ->
+    has_file directory file && not (is_installed directory))
+;;
+
+(* The head of a path, such as Source in Source.Site.t, unless the path applies a functor,
+   whose result no single module owns. *)
+let rec head_of : Path.t -> Ident.t option = function
+  | Pident identifier -> Some identifier
+  | Pdot (path, _) -> head_of path
+  | Papply _ | Pextra_ty _ -> None
+;;
+
+(* A type of another compilation unit has a global identifier at the head of its path,
+   unlike a type of the current one. *)
+let owner_of (label : Data_types.label_description) ~is_own =
+  match Types.get_desc label.lbl_res with
+  | Tconstr (path, _, _) ->
+    let%bind.Option head = head_of path in
+    if Ident.is_global head && is_own (Ident.name head)
+    then Option.map (String.rsplit2 (Path.name path) ~on:'.') ~f:fst
+    else None
+  | _ -> None
+;;
+
+(* We ask once for each module whether the project builds it. *)
+let owners_in pipeline typing =
+  let build_path = Mconfig.build_path (Mpipeline.final_config pipeline) in
+  let is_own = Memo.of_comparator (module String) (is_built_here ~build_path) in
+  fold_over typing ~seed:Source.Extent.Map.empty ~visit:(fun _ node owners ->
+    List.fold (labels_of node) ~init:owners ~f:(fun owners (location, label) ->
+      match owner_of label ~is_own with
+      | Some owner -> Map.set owners ~key:(extent_of location) ~data:owner
+      | None -> owners))
+;;
+
+let typed_index_of pipeline ~path ~index =
   Or_error.try_with (fun () ->
-    Mpipeline.with_pipeline pipeline (fun () ->
-      index_of pipeline (Mpipeline.typer_result pipeline)))
+    Mpipeline.with_pipeline pipeline (fun () -> index (Mpipeline.typer_result pipeline)))
   |> Or_error.tag ~tag:("could not read the compiler types for " ^ path)
 ;;
 
@@ -165,15 +246,17 @@ let parse pipeline =
     |> Or_error.error_string
 ;;
 
+let source_comment_of (body, location) =
+  Source.Comment.create ~extent:(extent_of location) ~body
+;;
+
 let session_of pipeline ~path =
-  let comment_of (body, location) =
-    { Source.Comment.extent = extent_of location; body }
-  in
   let%map.Or_error syntax_tree = parse pipeline in
   { pipeline
   ; syntax_tree
-  ; comments = List.map (Mpipeline.reader_comments pipeline) ~f:comment_of
-  ; shapes = lazy (shapes_of pipeline ~path)
+  ; comments = List.map (Mpipeline.reader_comments pipeline) ~f:source_comment_of
+  ; shapes = lazy (typed_index_of pipeline ~path ~index:(shapes_in pipeline))
+  ; owners = lazy (typed_index_of pipeline ~path ~index:(owners_in pipeline))
   }
 ;;
 
@@ -186,11 +269,19 @@ let create ~path text =
 let syntax_tree_of session = session.syntax_tree
 let comments_of session = session.comments
 
+let owner_at session extent =
+  let%bind.Option owners = Result.ok (force session.owners) in
+  Map.find owners extent
+;;
+
 let shape_at session extent =
   let%bind.Option shapes = Result.ok (force session.shapes) in
   Map.find shapes extent
 ;;
 
 let verify session =
-  if Lazy.is_val session.shapes then Or_error.ignore_m (force session.shapes) else Ok ()
+  let check index =
+    if Lazy.is_val index then Or_error.ignore_m (force index) else Ok ()
+  in
+  Or_error.combine_errors_unit [ check session.shapes; check session.owners ]
 ;;

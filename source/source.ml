@@ -11,6 +11,10 @@ module Extent = struct
 
   include T
   include Comparable.Make_plain (T)
+
+  let create ~start ~stop = { start; stop }
+  let start_of extent = extent.start
+  let stop_of extent = extent.stop
 end
 
 module Comment = struct
@@ -18,22 +22,24 @@ module Comment = struct
     { extent : Extent.t
     ; body : string
     }
-end
 
-module Position = struct
-  type t =
-    { line : int
-    ; column : int
-    }
-  [@@deriving compare]
+  let create ~extent ~body = { extent; body }
+  let extent_of comment = comment.extent
+  let body_of comment = comment.body
 end
 
 module Site = struct
   type t =
     { path : string
-    ; position : Position.t
+    ; line : int
+    ; column : int
     }
   [@@deriving compare]
+
+  let path_of site = site.path
+  let line_of site = site.line
+  let column_of site = site.column
+  let to_string site = sprintf "%s:%d:%d" site.path site.line site.column
 end
 
 (* We end [line_starts] with the length of the text, so that the line at [index] spans the
@@ -92,7 +98,13 @@ let line_at source offset =
 let site_at source ~offset =
   let line = line_at source offset in
   let column = offset - source.line_starts.(line) in
-  { Site.path = source.path; position = { line = line + 1; column = column + 1 } }
+  { Site.path = source.path; line = line + 1; column = column + 1 }
+;;
+
+let text_in source ({ start; stop } : Extent.t) =
+  if 0 <= start && start <= stop && stop <= String.length source.text
+  then Some (String.sub source.text ~pos:start ~len:(stop - start))
+  else None
 ;;
 
 let does_spell source ~offset spelling =

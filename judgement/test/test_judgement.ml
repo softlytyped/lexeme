@@ -16,9 +16,15 @@ let diagnostics_of ?(path = "input.ml") text =
 
 (* Prints each finding as its position, its rule and its subject. *)
 let show ?path text =
-  List.iter (diagnostics_of ?path text) ~f:(fun (diagnostic : Diagnostic.t) ->
-    let { Source.Position.line; column } = diagnostic.site.position in
-    printf "%d:%d %s %s\n" line column (Diagnostic.code_of diagnostic) diagnostic.subject)
+  List.iter (diagnostics_of ?path text) ~f:(fun diagnostic ->
+    let line = Source.Site.line_of (Diagnostic.site_of diagnostic)
+    and column = Source.Site.column_of (Diagnostic.site_of diagnostic) in
+    printf
+      "%d:%d %s %s\n"
+      line
+      column
+      (Diagnostic.code_of diagnostic)
+      (Diagnostic.subject_of diagnostic))
 ;;
 
 (* Prints each finding in full. *)
@@ -63,10 +69,8 @@ let%expect_test "declaration order preserves the set of plural notes" =
     ]
   in
   Quickcheck.test (List.gen_permutations declarations) ~f:(fun permutation ->
-    let subjects =
-      diagnostics_of (String.concat ~sep:"\n" permutation)
-      |> List.map ~f:(fun diagnostic -> diagnostic.subject)
-    in
+    let diagnostics = diagnostics_of (String.concat ~sep:"\n" permutation) in
+    let subjects = List.map diagnostics ~f:Diagnostic.subject_of in
     [%test_result: string list] subjects ~expect:[ "entries_at" ]);
   [%expect {| |}]
 ;;
@@ -86,8 +90,8 @@ let%expect_test "local declarations share a continuation and stop at sibling ope
 let run value =
   let entry_at item = item in
   let%bind count = value in
-  let entries_at items = items in
-  entries_at count|};
+  let entries_at items = count :: items in
+  entries_at [ count ]|};
   [%expect {| 7:7 plural-lift entries_at |}]
 ;;
 
@@ -307,11 +311,11 @@ let%expect_test "a function past each limit earns a note, a warning and then an 
   List.iter [ 10; 11; 20; 21; 30; 31 ] ~f:(fun lines -> print (function_of_length lines));
   [%expect
     {|
-    input.ml:1:5: note[function-length] apply: 11 source lines of code, more than 10
-    input.ml:1:5: note[function-length] apply: 20 source lines of code, more than 10
-    input.ml:1:5: warning[function-length] apply: 21 source lines of code, more than 20
-    input.ml:1:5: warning[function-length] apply: 30 source lines of code, more than 20
-    input.ml:1:5: error[function-length] apply: 31 source lines of code, more than 30
+    input.ml:1:5: note[function-length] apply: this definition has 11 source lines of code, more than 10
+    input.ml:1:5: note[function-length] apply: this definition has 20 source lines of code, more than 10
+    input.ml:1:5: warning[function-length] apply: this definition has 21 source lines of code, more than 20
+    input.ml:1:5: warning[function-length] apply: this definition has 30 source lines of code, more than 20
+    input.ml:1:5: error[function-length] apply: this definition has 31 source lines of code, more than 30
     |}]
 ;;
 
@@ -413,11 +417,11 @@ let contains () = true
 let entries_of () = ()|};
   [%expect
     {|
-    input.ml:1:5: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
-    input.ml:2:5: error[variable-name] quickly: expected a noun phrase
-    input.ml:3:5: error[function-name] matrix: expected a verb phrase, a predicate or a noun phrase with a preposition
-    input.ml:4:5: error[predicate-name] contains: expected a predicate, such as is_empty or has_entries, for a Boolean
-    input.ml:5:5: error[command-name] entries_of: expected a verb phrase for a command (command-query separation)
+    input.ml:1:5: error[single-letter] x: this name is a single letter, so use a longer name, or add a comment "lexeme: allow-letter" that gives a reason
+    input.ml:2:5: error[variable-name] quickly: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
+    input.ml:3:5: error[function-name] matrix: this name should be a verb phrase, a predicate, or a noun phrase with a preposition, such as entries_of, because it names a function
+    input.ml:4:5: error[predicate-name] contains: this name should be a predicate, such as is_empty or has_entries, because the function returns a Boolean
+    input.ml:5:5: error[command-name] entries_of: this name should be a verb phrase, because a function that returns nothing is a command (command-query separation)
     |}]
 ;;
 
@@ -426,9 +430,9 @@ let%expect_test "each rule on the names of types explains itself" =
 type record = { quickly : int }|};
   [%expect
     {|
-    input.ml:1:6: error[type-name] quickly: expected a noun phrase
-    input.ml:1:16: error[constructor-name] Quickly: expected a noun phrase
-    input.ml:2:17: error[field-name] quickly: expected a noun phrase
+    input.ml:1:6: error[type-name] quickly: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
+    input.ml:1:16: error[constructor-name] Quickly: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
+    input.ml:2:17: error[field-name] quickly: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
     |}]
 ;;
 
@@ -441,7 +445,7 @@ let is_zero () = 0|};
     {|
     input.ml:1:5: note[predicate-state] is_ready: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
     input.ml:2:5: note[predicate-state] does_accept: Are you sure Ok false is a meaningfully different state from Error? If so, you can ignore this note.
-    input.ml:3:5: error[predicate-result] is_zero: expected a Boolean result, found int
+    input.ml:3:5: error[predicate-result] is_zero: this predicate should return a Boolean, but it returns int
     |}]
 ;;
 
@@ -452,7 +456,7 @@ let entry_of item = item|};
   [%expect
     {|
     input.ml:1:5: note[plural-lift] entries_of: check whether this maps entry_of over a collection (line 2)
-    input.ml:1:5: note[function-length] apply: 11 source lines of code, more than 10
+    input.ml:1:5: note[function-length] apply: this definition has 11 source lines of code, more than 10
     |}]
 ;;
 
@@ -463,10 +467,10 @@ let compare first second = if first then 1 else if second then 2 else 3
 let tabulate first second = match first, second with true, _ -> 1 | _, true -> 2 | _ -> 3|};
   [%expect
     {|
-    input.ml:1:19: warning[lone-boolean-match] match: the only Boolean condition of its function: use if-then-else
+    input.ml:1:19: warning[lone-boolean-match] match: this match is the only Boolean condition of its function, so use if-then-else
     input.ml:1:19: note[boolean-match] match: could a variant type name the cases of this Boolean?
-    input.ml:2:5: warning[if-else] compare: if-then-else on lines 2, 2: use pattern matching for all but one
-    input.ml:3:29: error[boolean-tuple] match: matches 2 Booleans at once: parse, don't validate, with a variant type
+    input.ml:2:5: warning[if-else] compare: this function has if-then-else on lines 2, 2, so use pattern matching for all but one
+    input.ml:3:29: error[boolean-tuple] match: this match takes 2 Booleans at once, so parse, don't validate, with a variant type
     |}]
 ;;
 
@@ -476,10 +480,10 @@ let%expect_test "each rule on guards and nesting explains itself" =
 let classify first second = match first with true -> (match second with true -> 1 | false -> 2) | false -> 3|};
   [%expect
     {|
-    input.ml:1:56: note[late-guard] match: a guard clause after work that it does not use: could it come first?
+    input.ml:1:56: note[late-guard] match: this guard clause comes after unrelated work, so could it come first?
     input.ml:2:29: note[boolean-match] match: could a variant type name the cases of this Boolean?
     input.ml:2:54: note[boolean-match] match: could a variant type name the cases of this Boolean?
-    input.ml:2:54: warning[nested-boolean] match: a nested conditional on Booleans: parse, don't validate, with a variant type
+    input.ml:2:54: warning[nested-boolean] match: this conditional on Booleans lies within another, so parse, don't validate, with a variant type
     |}]
 ;;
 
@@ -499,4 +503,19 @@ let%expect_test "a local function carries the work that it uses" =
   let cap () = min total 10 in
   match limit with None -> cap () | Some bound -> min bound total|};
   [%expect {| |}]
+;;
+
+(* The project's own modules are out of sight here, so lexeme's check of its own source
+   shows the access that this rule finds, and the session's test shows where the project
+   ends. *)
+let%expect_test "a field of a local record, or of an installed library's, is no access" =
+  show
+    {|type point = { across : int; down : int }
+let across_of point = point.across
+let size_of (statistics : Hashtbl.statistics) = statistics.num_bindings
+let buckets_of { Hashtbl.num_buckets; _ } = num_buckets|};
+  [%expect {|
+    1:16 field-name across
+    2:5 function-name across_of
+    |}]
 ;;

@@ -7,22 +7,27 @@ module Scope = struct
     | Function_body of Binding.t
 end
 
+(* The operations that answer [unit] alone, which a program performs one after another. *)
+module Operation = struct
+  type t =
+    | Declaration of Binding.t
+    | Decision of Decision.t
+    | Access of Access.t
+end
+
 module Program = struct
   type 'answer t =
     | Return of 'answer
-    | Declaration of Binding.t * 'answer t
-    | Decision of Decision.t * 'answer t
+    | Step of Operation.t * 'answer t
     | Scope of Scope.t * unit t * 'answer t
 
   let return answer = Return answer
 
-  let rec bind program ~f:proceed =
-    let resume rest = bind rest ~f:proceed in
+  let rec bind program ~f:continue_with =
     match program with
-    | Return answer -> proceed answer
-    | Declaration (binding, rest) -> Declaration (binding, resume rest)
-    | Decision (decision, rest) -> Decision (decision, resume rest)
-    | Scope (scope, body, rest) -> Scope (scope, body, resume rest)
+    | Return answer -> continue_with answer
+    | Step (operation, rest) -> Step (operation, bind rest ~f:continue_with)
+    | Scope (scope, body, rest) -> Scope (scope, body, bind rest ~f:continue_with)
   ;;
 
   let map = `Define_using_bind
@@ -31,8 +36,10 @@ end
 include Program
 include Monad.Make (Program)
 
-let declare binding = Declaration (binding, return ())
-let decide decision = Decision (decision, return ())
+let perform operation = Step (operation, return ())
+let declare binding = perform (Declaration binding)
+let decide decision = perform (Decision decision)
+let access field_access = perform (Access field_access)
 let enclose body = Scope (Block, body, return ())
 let define binding body = Scope (Function_body binding, body, return ())
 
@@ -44,6 +51,7 @@ module Recorder = struct
   let add recorder step = recorder.steps <- step :: recorder.steps
   let declare recorder binding = add recorder (declare binding)
   let decide recorder decision = add recorder (decide decision)
+  let access recorder field_access = add recorder (access field_access)
 
   let nest recorder scope traverse =
     let outer_steps = recorder.steps in
@@ -66,6 +74,7 @@ let record traverse =
 type 'result algebra =
   { declare : Binding.t -> 'result
   ; decide : Decision.t -> 'result
+  ; access : Access.t -> 'result
   ; enclose : 'result list -> 'result
   ; define : Binding.t -> 'result list -> 'result
   }
@@ -78,14 +87,18 @@ let close algebra (scope : Scope.t) inner_children =
   | Function_body binding, _ -> [ algebra.define binding (List.rev inner_children) ]
 ;;
 
+let interpret algebra : Operation.t -> _ = function
+  | Declaration binding -> algebra.declare binding
+  | Decision decision -> algebra.decide decision
+  | Access field_access -> algebra.access field_access
+;;
+
 (* We gather a scope's children in reverse. *)
 let rec children_of algebra program children =
   match program with
   | Return () -> children
-  | Declaration (binding, rest) ->
-    children_of algebra rest (algebra.declare binding :: children)
-  | Decision (decision, rest) ->
-    children_of algebra rest (algebra.decide decision :: children)
+  | Step (operation, rest) ->
+    children_of algebra rest (interpret algebra operation :: children)
   | Scope (scope, body, rest) ->
     let inner_children = children_of algebra body [] in
     children_of algebra rest (close algebra scope inner_children @ children)

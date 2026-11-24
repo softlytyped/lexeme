@@ -1,5 +1,5 @@
 (library
  (name display)
- (libraries binding core decision syntax)
+ (libraries access binding core decision syntax)
  (preprocess
   (pps ppx_jane)))

@@ -1,8 +1,9 @@
-(** The syntax of names: the free monad over four operations, which all answer [unit].
-    [declare] binds a name in the current scope, and [decide] branches. [enclose] and
-    [define] are scoped: [enclose] runs a computation in a lexical block of its own, and
-    [define] declares a function and runs its body. A reader writes a source file as a
-    program, and a check is an algebra for the program's fold. *)
+(** The syntax of a source: the free monad over five operations, which all answer [unit].
+    [declare] binds a name in the current scope, [decide] branches, and [access] reads a
+    field of a record that another compilation unit defines. [enclose] and [define] are
+    scoped: [enclose] runs a computation in a lexical block of its own, and [define]
+    declares a function and runs its body. A reader writes a source file as a program, and
+    a check is an algebra for the program's fold. *)
 
 open! Core
 
@@ -12,6 +13,7 @@ include Monad.S with type 'a t := 'a t
 
 val declare : Binding.t -> unit t
 val decide : Decision.t -> unit t
+val access : Access.t -> unit t
 val enclose : unit t -> unit t
 val define : Binding.t -> unit t -> unit t
 
@@ -21,6 +23,7 @@ module Recorder : sig
 
   val declare : t -> Binding.t -> unit
   val decide : t -> Decision.t -> unit
+  val access : t -> Access.t -> unit
 
   (** Runs a traversal of one scope. *)
   val enclose : t -> (unit -> unit) -> unit
@@ -35,6 +38,7 @@ val record : (Recorder.t -> unit) -> unit t
 type 'result algebra =
   { declare : Binding.t -> 'result
   ; decide : Decision.t -> 'result
+  ; access : Access.t -> 'result
   ; enclose : 'result list -> 'result
   ; define : Binding.t -> 'result list -> 'result
   }

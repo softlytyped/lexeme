@@ -9,6 +9,19 @@ type t =
   }
 [@@deriving of_sexp]
 
+let vocabulary_of configuration = configuration.vocabulary
+let function_lines_of configuration = configuration.function_lines
+let exemptions_of configuration = configuration.exemptions
+let directories_of configuration = configuration.directories
+let definitions_of configuration = configuration.definitions
+
+let extend configuration ~directories ~definitions =
+  { configuration with
+    directories = configuration.directories @ directories
+  ; definitions = configuration.definitions @ definitions
+  }
+;;
+
 let file_name = ".lexeme"
 
 let rec nearest_file_from directory =

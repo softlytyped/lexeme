@@ -1,6 +1,7 @@
 (library
  (name ocaml_syntax)
  (libraries
+  access
   binding
   branching
   core

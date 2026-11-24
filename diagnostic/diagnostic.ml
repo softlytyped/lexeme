@@ -37,15 +37,37 @@ module Rule = struct
       | Constructor -> "constructor-name"
     ;;
 
+    let letter_message =
+      "this name is a single letter, so use a longer name, or add a comment \"lexeme: \
+       allow-letter\" that gives a reason"
+    ;;
+
+    let noun_phrase_message =
+      "this name should be a noun phrase, such as matrix or start_of_line, because it \
+       names a thing"
+    ;;
+
+    let function_message =
+      "this name should be a verb phrase, a predicate, or a noun phrase with a \
+       preposition, such as entries_of, because it names a function"
+    ;;
+
+    let predicate_message =
+      "this name should be a predicate, such as is_empty or has_entries, because the \
+       function returns a Boolean"
+    ;;
+
+    let command_message =
+      "this name should be a verb phrase, because a function that returns nothing is a \
+       command (command-query separation)"
+    ;;
+
     let message_of = function
-      | Single_letter ->
-        "use a longer name or add a lexeme: allow-letter comment with a reason"
-      | Variable | Field | Type | Constructor -> "expected a noun phrase"
-      | Function ->
-        "expected a verb phrase, a predicate or a noun phrase with a preposition"
-      | Predicate ->
-        "expected a predicate, such as is_empty or has_entries, for a Boolean"
-      | Command -> "expected a verb phrase for a command (command-query separation)"
+      | Single_letter -> letter_message
+      | Variable | Field | Type | Constructor -> noun_phrase_message
+      | Function -> function_message
+      | Predicate -> predicate_message
+      | Command -> command_message
     ;;
   end
 
@@ -78,8 +100,9 @@ module Rule = struct
     let message_of = function
       | Optional_boolean -> question_of "Some false" "None"
       | Fallible_boolean -> question_of "Ok false" "Error"
-      | Wrong spelling -> "expected a Boolean result, found " ^ spelling
-      | Unknown -> "could not infer the result type: add a type annotation"
+      | Wrong spelling ->
+        "this predicate should return a Boolean, but it returns " ^ spelling
+      | Unknown -> "lexeme could not infer the result type, so add a type annotation"
     ;;
   end
 
@@ -107,18 +130,31 @@ module Rule = struct
       | Nested_boolean -> "nested-boolean"
     ;;
 
-    let advice = "parse, don't validate, with a variant type"
+    let advice = "so parse, don't validate, with a variant type"
+
+    let lone_match_message =
+      "this match is the only Boolean condition of its function, so use if-then-else"
+    ;;
+
+    let late_guard_message =
+      "this guard clause comes after unrelated work, so could it come first?"
+    ;;
+
+    let conditionals_message_of lines =
+      sprintf
+        "this function has if-then-else on lines %s, so use pattern matching for all but \
+         one"
+        lines
+    ;;
 
     let message_of = function
       | Boolean_match -> "could a variant type name the cases of this Boolean?"
-      | Boolean_tuple count -> sprintf "matches %d Booleans at once: %s" count advice
-      | Lone_boolean_match ->
-        "the only Boolean condition of its function: use if-then-else"
-      | Several_conditionals lines ->
-        sprintf "if-then-else on lines %s: use pattern matching for all but one" lines
-      | Late_guard ->
-        "a guard clause after work that it does not use: could it come first?"
-      | Nested_boolean -> "a nested conditional on Booleans: " ^ advice
+      | Boolean_tuple count ->
+        sprintf "this match takes %d Booleans at once, %s" count advice
+      | Lone_boolean_match -> lone_match_message
+      | Several_conditionals lines -> conditionals_message_of lines
+      | Late_guard -> late_guard_message
+      | Nested_boolean -> "this conditional on Booleans lies within another, " ^ advice
     ;;
   end
 
@@ -127,6 +163,7 @@ module Rule = struct
     | Answer of Answer.t
     | Branch of Branch.t
     | Plural_lift of Binding.t
+    | Field_access of Access.t
     | Function_length of
         { lines : int
         ; bound : int
@@ -138,6 +175,7 @@ module Rule = struct
     | Answer answer -> Answer.severity_of answer
     | Branch branch -> Branch.severity_of branch
     | Plural_lift _ -> Note
+    | Field_access _ -> Warning
     | Function_length { severity; _ } -> severity
   ;;
 
@@ -146,12 +184,32 @@ module Rule = struct
     | Answer answer -> Answer.code_of answer
     | Branch branch -> Branch.code_of branch
     | Plural_lift _ -> "plural-lift"
+    | Field_access _ -> "field-access"
     | Function_length _ -> "function-length"
   ;;
 
-  let lift_message_of (singular : Binding.t) =
-    let line = singular.site.position.line in
-    sprintf "check whether this maps %s over a collection (line %d)" singular.name line
+  (* Each concept has one module, which alone knows how it holds its data. *)
+  let access_message_of access =
+    let owner = Access.owner_of access in
+    sprintf
+      "this reads a field of a record defined by %s, which ties the code to how %s holds \
+       its data; could %s give a view, such as %s_of?"
+      owner
+      owner
+      owner
+      (Access.field_of access)
+  ;;
+
+  let lift_message_of singular =
+    let line = Source.Site.line_of (Binding.site_of singular) in
+    sprintf
+      "check whether this maps %s over a collection (line %d)"
+      (Binding.name_of singular)
+      line
+  ;;
+
+  let length_message_of lines bound =
+    sprintf "this definition has %d source lines of code, more than %d" lines bound
   ;;
 
   let message_of = function
@@ -159,8 +217,8 @@ module Rule = struct
     | Answer answer -> Answer.message_of answer
     | Branch branch -> Branch.message_of branch
     | Plural_lift singular -> lift_message_of singular
-    | Function_length { lines; bound; _ } ->
-      sprintf "%d source lines of code, more than %d" lines bound
+    | Field_access access -> access_message_of access
+    | Function_length { lines; bound; _ } -> length_message_of lines bound
   ;;
 end
 
@@ -171,21 +229,32 @@ type t =
   }
 
 let create ~site ~subject rule = { site; subject; rule }
-let of_binding (binding : Binding.t) = create ~site:binding.site ~subject:binding.name
 
-let of_decision (decision : Decision.t) =
-  create ~site:decision.site ~subject:decision.keyword
+let of_binding binding =
+  create ~site:(Binding.site_of binding) ~subject:(Binding.name_of binding)
 ;;
 
+let of_access access =
+  create
+    ~site:(Access.site_of access)
+    ~subject:(Access.field_of access)
+    (Field_access access)
+;;
+
+let of_decision decision =
+  create ~site:(Decision.site_of decision) ~subject:(Decision.keyword_of decision)
+;;
+
+let site_of diagnostic = diagnostic.site
+let subject_of diagnostic = diagnostic.subject
+let rule_of diagnostic = diagnostic.rule
 let severity_of diagnostic = Rule.severity_of diagnostic.rule
 let code_of diagnostic = Rule.code_of diagnostic.rule
 
-let to_string { site = { path; position = { line; column } }; subject; rule } =
+let to_string { site; subject; rule } =
   sprintf
-    "%s:%d:%d: %s[%s] %s: %s"
-    path
-    line
-    column
+    "%s: %s[%s] %s: %s"
+    (Source.Site.to_string site)
     (Severity.to_string (Rule.severity_of rule))
     (Rule.code_of rule)
     subject

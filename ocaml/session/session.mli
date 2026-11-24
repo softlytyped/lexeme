@@ -20,6 +20,16 @@ module Shape : sig
     | Function of 'codomain
 end
 
+(** Returns whether the project builds the module of a name, rather than installs it as a
+    library: its compiled interface lies in one of the directories of the build path, but
+    not beside the standard library, whose directory holds stdlib.cmi. *)
+val is_built_here : build_path:string list -> string -> bool
+
+(** Returns the module that defines the record of the field whose name a field access or a
+    record pattern writes at an extent, where that module is another compilation unit and
+    the source types well enough to say. *)
+val owner_at : t -> Source.Extent.t -> string option
+
 (** Returns the compiler's shape for the declaration at an extent, where the source types
     well enough to say. *)
 val shape_at : t -> Source.Extent.t -> Binding.Codomain.t Lazy.t Shape.t option

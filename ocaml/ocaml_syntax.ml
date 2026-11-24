@@ -25,7 +25,7 @@ let is_identifier spelling =
 let binding_of context ?definition role (name : string Location.loc) =
   if is_identifier name.txt
   then (
-    let offset = name.loc.loc_start.pos_cnum in
+    let offset = Source.Extent.start_of (Session.extent_of name.loc) in
     Binding.find context.source ~offset ?definition ~name:name.txt role)
   else None
 ;;
@@ -35,10 +35,16 @@ let declare context ?definition role name =
   |> Option.iter ~f:(Syntax.Recorder.declare context.recorder)
 ;;
 
+let has_body binding =
+  match Binding.role_of binding with
+  | Function _ | Test -> true
+  | Variable | Field _ | Type | Constructor -> false
+;;
+
 (* A function's binding defines its body, and any other binding is declared before it. *)
 let introduce context binding ~descend =
-  match (binding : Binding.t option) with
-  | Some ({ role = Function _ | Test; _ } as binding) ->
+  match binding with
+  | Some binding when has_body binding ->
     Syntax.Recorder.define context.recorder binding descend
   | Some binding ->
     Syntax.Recorder.declare context.recorder binding;
@@ -46,14 +52,37 @@ let introduce context binding ~descend =
   | None -> descend ()
 ;;
 
-let rec pattern ~bind (iterator : Ast_iterator.iterator) node =
+let fields_of_pattern node =
+  match node.ppat_desc with
+  | Ppat_record (fields, _) -> List.map fields ~f:fst
+  | _ -> []
+;;
+
+(* A pattern binds its names and reaches the fields of its records, under a constraint or
+   an alias too. *)
+let rec pattern ~bind ~reach (iterator : Ast_iterator.iterator) node =
+  List.iter (fields_of_pattern node) ~f:reach;
   match node.ppat_desc with
   | Ppat_var name -> bind name
   | Ppat_alias (body, name) ->
-    pattern ~bind iterator body;
+    pattern ~bind ~reach iterator body;
     bind name
-  | Ppat_constraint (body, _, _) -> pattern ~bind iterator body
+  | Ppat_constraint (body, _, _) -> pattern ~bind ~reach iterator body
   | _ -> base.pat iterator node
+;;
+
+(* A field of a record that another compilation unit defines is an access. *)
+let access_of context (field : Longident.t Location.loc) =
+  let extent = Session.extent_of field.loc in
+  let%map.Option owner = Session.owner_at context.session extent in
+  Access.create
+    ~site:(Source.site_at context.source ~offset:(Source.Extent.start_of extent))
+    ~field:(Longident.last field.txt)
+    ~owner
+;;
+
+let reach context field =
+  Option.iter (access_of context field) ~f:(Syntax.Recorder.access context.recorder)
 ;;
 
 let rec name_of_pattern node =
@@ -65,7 +94,7 @@ let rec name_of_pattern node =
 
 (* A pattern of several names declares each of them before the definition's body. *)
 let unpack context (iterator : Ast_iterator.iterator) definition ~role_of =
-  pattern iterator definition.pvb_pat ~bind:(fun name ->
+  pattern iterator definition.pvb_pat ~reach:(reach context) ~bind:(fun name ->
     declare context (role_of name) name);
   iterator.expr iterator definition.pvb_expr
 ;;
@@ -145,8 +174,8 @@ let description_of definition ~kind =
 ;;
 
 let test_binding_of context item ~description =
-  let offset = item.pstr_loc.loc_start.pos_cnum in
   let definition = Session.extent_of item.pstr_loc in
+  let offset = Source.Extent.start_of definition in
   Binding.of_test context.source ~offset ~description ~definition
 ;;
 
@@ -189,14 +218,32 @@ let branching_of expression =
 ;;
 
 let decision_of context expression =
-  let%map.Option keyword, form = branching_of expression in
   let extent = Session.extent_of expression.pexp_loc in
-  { Decision.site = Source.site_at context.source ~offset:extent.start
-  ; keyword
-  ; form
-  ; placement = placement_of context extent
-  ; nesting = nesting_of context extent
-  }
+  let%map.Option keyword, form = branching_of expression in
+  Decision.create
+    ~site:(Source.site_at context.source ~offset:(Source.Extent.start_of extent))
+    ~keyword
+    ~form
+    ~placement:(placement_of context extent)
+    ~nesting:(nesting_of context extent)
+;;
+
+(* A field that an expression reads or updates is an access. A record built in full names
+   each of its fields, as a constructor names its arguments, so it reads none of them. *)
+let observe context expression =
+  match expression.pexp_desc with
+  | Pexp_field (_, field) | Pexp_setfield (_, field, _) -> reach context field
+  | Pexp_record (fields, Some _) ->
+    List.iter fields ~f:(fun (field, _) -> reach context field)
+  | _ -> ()
+;;
+
+let visit context (iterator : Ast_iterator.iterator) expression =
+  Option.iter
+    (decision_of context expression)
+    ~f:(Syntax.Recorder.decide context.recorder);
+  observe context expression;
+  base.expr iterator expression
 ;;
 
 (* A link of a chain of [let]s declares its names and gives the rest of the chain. *)
@@ -210,13 +257,6 @@ let after_operations (iterator : Ast_iterator.iterator) operation =
     iterator.pat iterator binding_operator.pbop_pat;
     iterator.expr iterator binding_operator.pbop_exp);
   operation.body
-;;
-
-let visit context (iterator : Ast_iterator.iterator) expression =
-  Option.iter
-    (decision_of context expression)
-    ~f:(Syntax.Recorder.decide context.recorder);
-  base.expr iterator expression
 ;;
 
 (* A chain of [let]s declares its names in one scope, so that each declaration meets its
@@ -240,7 +280,7 @@ let with_values context (iterator : Ast_iterator.iterator) : Ast_iterator.iterat
   let bind name = declare context (Typing.role_of_pattern context.session name) name in
   { iterator with
     attribute = (fun _ _ -> ())
-  ; pat = pattern ~bind
+  ; pat = pattern ~bind ~reach:(reach context)
   ; value_binding = define context
   ; value_description = specify context
   ; structure_item = inspect context

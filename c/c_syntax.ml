@@ -14,9 +14,9 @@ let character_at text offset =
 
 let comment_of text ~start ~stop ~closing =
   let body_start = start + String.length block_opening in
-  { Source.Comment.extent = { start; stop }
-  ; body = String.slice text body_start (stop - String.length closing)
-  }
+  Source.Comment.create
+    ~extent:(Source.Extent.create ~start ~stop)
+    ~body:(String.slice text body_start (stop - String.length closing))
 ;;
 
 let rec comments_in_code text offset comments =
@@ -96,7 +96,7 @@ let extent_of node =
   let%bind finish = field_of range "end" in
   let%map last = integer_at finish ~name:"offset"
   and length = integer_at finish ~name:"tokLen" in
-  { Source.Extent.start; stop = last + length }
+  Source.Extent.create ~start ~stop:(last + length)
 ;;
 
 (* We recognise a header's declarations by their include site, even where Clang elides the
@@ -105,6 +105,18 @@ let is_spelled_here node =
   let location = Option.value (field_of node "loc") ~default:`Null in
   Option.is_none (field_of location "includedFrom")
   && Option.is_none (field_of location "expansionLoc")
+;;
+
+(* A range is spelled here when neither of its ends lies in an included file or in a
+   macro. *)
+let is_range_spelled_here node =
+  let ends =
+    Option.value_map (field_of node "range") ~default:[] ~f:(fun range ->
+      List.filter_map [ "begin"; "end" ] ~f:(field_of range))
+  in
+  List.for_all ends ~f:(fun location ->
+    List.for_all [ "includedFrom"; "expansionLoc"; "spellingLoc" ] ~f:(fun name ->
+      Option.is_none (field_of location name)))
 ;;
 
 let spelling_of node =
@@ -236,14 +248,21 @@ let arguments_of ~path ~directories ~definitions =
     ]
 ;;
 
+let program_of ~path text tree =
+  let comments = comments_in_code text 0 [] in
+  let source = Source.create ~path ~comments text in
+  visit source String.Map.empty tree
+;;
+
+let tree_of output =
+  Or_error.try_with (fun () -> Yojson.Safe.from_string output)
+  |> Or_error.tag ~tag:"expected Clang's declaration tree"
+;;
+
 let read ~path ~directories ~definitions text =
   let open Or_error.Let_syntax in
   let arguments = arguments_of ~path ~directories ~definitions in
   let%bind output = Process.run ~input:text "clang" arguments in
-  let%map tree =
-    Or_error.try_with (fun () -> Yojson.Safe.from_string output)
-    |> Or_error.tag ~tag:"expected Clang's declaration tree"
-  in
-  let source = Source.create ~path ~comments:(comments_in_code text 0 []) text in
-  visit source String.Map.empty tree
+  let%map tree = tree_of output in
+  program_of ~path text tree
 ;;

@@ -49,7 +49,8 @@ module Limits = struct
 end
 
 type context =
-  { grammar : Grammar.t
+  { lexicon : Lexicon.t
+  ; grammar : Grammar.t
   ; limits : Limits.t
   ; exemptions : String.Set.t
   }
@@ -107,8 +108,8 @@ let typed_rules_of name readings codomain ~judge =
   | Statement -> judge readings (force codomain)
 ;;
 
-let phrase_rules_of (binding : Binding.t) name readings =
-  match binding.role with
+let phrase_rules_of binding name readings =
+  match Binding.role_of binding with
   | Variable -> expect readings [ Noun_phrase ] Variable
   | Function codomain -> typed_rules_of name readings codomain ~judge:rules_of_function
   | Field codomain -> typed_rules_of name readings codomain ~judge:rules_of_field
@@ -119,51 +120,51 @@ let phrase_rules_of (binding : Binding.t) name readings =
 
 (* A single letter passes when a comment on its line follows it directly and reads
    "lexeme: allow-letter" and then a reason. *)
-let has_letter_exception (binding : Binding.t) =
-  Option.exists binding.comment ~f:(fun body ->
+let has_letter_exception binding =
+  Option.exists (Binding.comment_of binding) ~f:(fun body ->
     match String.chop_prefix (String.strip body) ~prefix:"lexeme: allow-letter " with
     | None -> false
     | Some reason -> not (String.is_empty (String.strip reason) || String.mem body '\n'))
 ;;
 
 (* The letter [t] names a module's main type. *)
-let letter_rules_of (binding : Binding.t) =
-  match binding.role, binding.name with
+let letter_rules_of binding =
+  match Binding.role_of binding, Binding.name_of binding with
   | Type, "t" -> []
   | _ -> if has_letter_exception binding then [] else [ Rule.Name Single_letter ]
 ;;
 
-let word_rules_of (binding : Binding.t) name readings =
+let word_rules_of binding name readings =
   if Grammar.Name.is_letter name
   then letter_rules_of binding
   else phrase_rules_of binding name readings
 ;;
 
-let name_rules_of context (binding : Binding.t) name readings =
-  if Set.mem context.exemptions binding.name
+let name_rules_of context binding name readings =
+  if Set.mem context.exemptions (Binding.name_of binding)
   then []
   else word_rules_of binding name readings
 ;;
 
-let length_rules_of limits (binding : Binding.t) =
+let length_rules_of limits binding =
   let rule_of lines =
-    Limits.bounds_of limits binding.role
+    Limits.bounds_of limits (Binding.role_of binding)
     |> List.find ~f:(fun (_, bound) -> lines > bound)
     |> Option.map ~f:(fun (severity, bound) ->
       Rule.Function_length { lines; bound; severity })
   in
-  Option.to_list (Option.bind binding.lines ~f:rule_of)
+  Option.to_list (Option.bind (Binding.lines_of binding) ~f:rule_of)
 ;;
 
-let singulars_of grammar (binding : Binding.t) name readings =
-  match binding.role with
+let singulars_of grammar binding name readings =
+  match Binding.role_of binding with
   | Function _ when List.mem readings Reading.Nominal ~equal:Reading.equal ->
     Grammar.singulars_of grammar name
   | Variable | Function _ | Field _ | Type | Constructor | Test -> []
 ;;
 
-let declaration_of context (binding : Binding.t) =
-  let name = Grammar.Name.of_spelling binding.name in
+let declaration_of context binding =
+  let name = Grammar.Name.of_spelling (Binding.name_of binding) in
   let readings = Grammar.readings_of context.grammar name in
   let rules =
     name_rules_of context binding name readings @ length_rules_of context.limits binding
@@ -180,30 +181,35 @@ let form_rules_of = function
   | Conditional | Tuple_match _ | Other_match -> []
 ;;
 
-let placement_rules_of (decision : Decision.t) =
-  match decision.placement, decision.nesting with
+let placement_rules_of decision =
+  match Decision.placement_of decision, Decision.nesting_of decision with
   | Late_position, Nested_position -> [ Rule.Branch Late_guard; Branch Nested_boolean ]
   | Late_position, Outer_position -> [ Rule.Branch Late_guard ]
   | Proper_position, Nested_position -> [ Rule.Branch Nested_boolean ]
   | Proper_position, Outer_position -> []
 ;;
 
-let decide (decision : Decision.t) =
-  let rules = form_rules_of decision.form @ placement_rules_of decision in
+let decide decision =
+  let rules = form_rules_of (Decision.form_of decision) @ placement_rules_of decision in
   let findings = List.map rules ~f:(Diagnostic.of_decision decision) in
   Scope { findings; decisions = [ decision ] }
 ;;
 
-let lines_of (decisions : Decision.t list) =
-  List.map decisions ~f:(fun decision -> Int.to_string decision.site.position.line)
+let scope_with findings = Scope { findings; decisions = [] }
+
+let lines_of sites =
+  List.map sites ~f:(fun site -> Int.to_string (Source.Site.line_of site))
   |> String.concat ~sep:", "
 ;;
+
+let access field_access = scope_with [ Diagnostic.of_access field_access ]
 
 let several_conditionals_of binding conditionals =
   match conditionals with
   | [] | [ _ ] -> []
   | _ :: _ :: _ ->
-    let rule = Rule.Branch (Several_conditionals (lines_of conditionals)) in
+    let lines = lines_of (List.map conditionals ~f:Decision.site_of) in
+    let rule = Rule.Branch (Several_conditionals lines) in
     [ Diagnostic.of_binding binding rule ]
 ;;
 
@@ -218,15 +224,16 @@ let lone_matches_of conditionals boolean_matches =
    condition. *)
 let body_rules_of binding (decisions : Decision.t list) =
   let of_form form =
-    List.filter decisions ~f:(fun decision -> Decision.Form.equal decision.form form)
+    List.filter decisions ~f:(fun decision ->
+      Decision.Form.equal (Decision.form_of decision) form)
   in
   let conditionals = of_form Conditional in
   several_conditionals_of binding conditionals
   @ lone_matches_of conditionals (of_form Boolean_match)
 ;;
 
-let with_declaration declarations (binding : Binding.t) =
-  Map.set declarations ~key:binding.name ~data:binding
+let with_declaration declarations binding =
+  Map.set declarations ~key:(Binding.name_of binding) ~data:binding
 ;;
 
 (* We seed a scope with its first declaration of each name, so that a plural meets a
@@ -239,12 +246,16 @@ let first_declarations_of children =
     | Declaration { binding; _ } -> with_declaration declarations binding)
 ;;
 
+let is_function binding =
+  match Binding.role_of binding with
+  | Function _ -> true
+  | Variable | Field _ | Type | Constructor | Test -> false
+;;
+
 let lift_notes_of declarations binding singulars =
-  List.filter_map singulars ~f:(fun spelling ->
-    match Map.find declarations spelling with
-    | Some ({ Binding.role = Function _; _ } as singular) ->
-      Some (Diagnostic.of_binding binding (Plural_lift singular))
-    | Some _ | None -> None)
+  List.filter_map singulars ~f:(Map.find declarations)
+  |> List.filter ~f:is_function
+  |> List.map ~f:(fun singular -> Diagnostic.of_binding binding (Plural_lift singular))
 ;;
 
 let findings_in declarations = function
@@ -254,16 +265,18 @@ let findings_in declarations = function
     with_declaration declarations binding, diagnostics @ notes
 ;;
 
-let decisions_in = function
-  | Declaration _ -> []
-  | Scope { decisions; _ } -> decisions
+(* A scope's decisions belong to the function body that holds it. *)
+let body_facts_of children ~facts_of =
+  List.concat_map children ~f:(function
+    | Declaration _ -> []
+    | Scope scope -> facts_of scope)
 ;;
 
 let scope_of children =
   let declarations = first_declarations_of children in
   let findings = List.folding_map children ~init:declarations ~f:findings_in in
   { findings = List.concat findings
-  ; decisions = List.concat_map children ~f:decisions_in
+  ; decisions = body_facts_of children ~facts_of:(fun scope -> scope.decisions)
   }
 ;;
 
@@ -275,13 +288,18 @@ let define context binding children =
   Declaration { declaration with diagnostics }
 ;;
 
-let algebra_of lexicon ~limits ~exemptions =
-  let context = { grammar = Grammar.of_lexicon lexicon; limits; exemptions } in
+let algebra_in context =
   { Syntax.declare = (fun binding -> Declaration (declaration_of context binding))
   ; decide
+  ; access
   ; enclose = (fun children -> Scope (scope_of children))
   ; define = define context
   }
+;;
+
+let algebra_of lexicon ~limits ~exemptions =
+  let grammar = Grammar.of_lexicon lexicon in
+  algebra_in { lexicon; grammar; limits; exemptions }
 ;;
 
 let diagnostics_of judgement =
@@ -290,6 +308,6 @@ let diagnostics_of judgement =
     | Declaration { diagnostics; _ } -> diagnostics
     | Scope { findings; _ } -> findings
   in
-  let site_of (diagnostic : Diagnostic.t) = diagnostic.site in
+  let site_of = Diagnostic.site_of in
   List.stable_sort diagnostics ~compare:(Comparable.lift Source.Site.compare ~f:site_of)
 ;;

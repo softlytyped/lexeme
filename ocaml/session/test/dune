@@ -1,0 +1,6 @@
+(library
+ (name test_session)
+ (libraries core core_unix core_unix.filename_unix session)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))

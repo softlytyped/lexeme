@@ -6,11 +6,12 @@ let comments_in text =
   List.zip_exn (offsets_of "(*") (offsets_of "*)")
   |> List.map ~f:(fun (start, closing) ->
     let body = String.slice text (start + String.length "(*") closing in
-    { Source.Comment.extent = { start; stop = closing + String.length "*)" }; body })
+    let extent = Source.Extent.create ~start ~stop:(closing + String.length "*)") in
+    Source.Comment.create ~extent ~body)
 ;;
 
 let source_of text = Source.create ~path:"input.ml" ~comments:(comments_in text) text
-let extent_of text = { Source.Extent.start = 0; stop = String.length text }
+let extent_of text = Source.Extent.create ~start:0 ~stop:(String.length text)
 
 let%expect_test "blank lines and lines of comment alone hold no code" =
   let text =
@@ -44,7 +45,9 @@ let%expect_test "positions count lines and columns from one" =
   let text = "first\nsecond line\n" in
   let source = source_of text in
   List.iter [ 0; 4; 6; 13 ] ~f:(fun offset ->
-    let { Source.Site.position = { line; column }; _ } = Source.site_at source ~offset in
+    let site = Source.site_at source ~offset in
+    let line = Source.Site.line_of site
+    and column = Source.Site.column_of site in
     print_s [%sexp (offset : int), (line : int), (column : int)]);
   [%expect {|
     (0 1 1)

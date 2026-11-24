@@ -28,11 +28,17 @@ type t =
   ; lines : int option
   }
 
-let lines_of source role definition =
+let definition_lines_of source role definition =
   match role with
   | Role.Function _ | Test -> Option.map definition ~f:(Source.code_lines_in source)
   | Variable | Field _ | Type | Constructor -> None
 ;;
+
+let name_of binding = binding.name
+let role_of binding = binding.role
+let site_of binding = binding.site
+let comment_of binding = binding.comment
+let lines_of binding = binding.lines
 
 let find source ~offset ?definition ~name role =
   let%map.Option () = Option.some_if (Source.does_spell source ~offset name) () in
@@ -40,7 +46,7 @@ let find source ~offset ?definition ~name role =
   ; role
   ; site = Source.site_at source ~offset
   ; comment = Source.comment_after source ~offset:(offset + String.length name)
-  ; lines = lines_of source role definition
+  ; lines = definition_lines_of source role definition
   }
 ;;
 
@@ -49,6 +55,6 @@ let of_test source ~offset ~description ~definition =
   ; role = Test
   ; site = Source.site_at source ~offset
   ; comment = None
-  ; lines = lines_of source Test (Some definition)
+  ; lines = definition_lines_of source Test (Some definition)
   }
 ;;

@@ -24,9 +24,8 @@ type flags =
    to the directory. A tracked file may since have been deleted. *)
 let listing_of directory =
   let arguments = [ "-C"; directory; "ls-files"; "-z"; "--cached"; "--others" ] in
-  Process.run
-    "git"
-    (arguments @ [ "--exclude-standard"; "--"; "*.ml"; "*.mli"; "*.c"; "*.h" ])
+  let patterns = [ "*.ml"; "*.mli"; "*.c"; "*.h" ] in
+  Process.run "git" (arguments @ [ "--exclude-standard"; "--" ] @ patterns)
 ;;
 
 let location_of directory path =
@@ -59,11 +58,16 @@ let files_of paths =
   List.dedup_and_sort (List.concat groups) ~compare:String.compare
 ;;
 
-let reader_of (configuration : Configuration.t) path =
-  let { Configuration.directories; definitions; _ } = configuration in
+let c_reader_of configuration ~path =
+  let directories = Configuration.directories_of configuration
+  and definitions = Configuration.definitions_of configuration in
+  C_syntax.read ~path ~directories ~definitions
+;;
+
+let reader_of configuration path =
   match snd (Filename.split_extension path) with
   | Some ("ml" | "mli") -> Ok (Ocaml_syntax.read ~path)
-  | Some ("c" | "h") -> Ok (C_syntax.read ~path ~directories ~definitions)
+  | Some ("c" | "h") -> Ok (c_reader_of configuration ~path)
   | _ -> Or_error.error_s [%message "expected an OCaml or C source file" path]
 ;;
 
@@ -74,10 +78,11 @@ let program_of configuration path =
   read text
 ;;
 
+let judge algebra program = Judgement.diagnostics_of (Syntax.fold algebra program)
+
 let check configuration algebra path =
   program_of configuration path
-  |> Or_error.map ~f:(fun program ->
-    Judgement.diagnostics_of (Syntax.fold algebra program))
+  |> Or_error.map ~f:(judge algebra)
   |> Or_error.tag ~tag:path
 ;;
 
@@ -91,8 +96,7 @@ let outcome_of diagnostics =
 let report results =
   let diagnostics, failures = List.partition_result results in
   let diagnostics = List.concat diagnostics in
-  List.iter diagnostics ~f:(fun diagnostic ->
-    print_endline (Diagnostic.to_string diagnostic));
+  List.iter diagnostics ~f:(Fn.compose print_endline Diagnostic.to_string);
   match failures with
   | [] -> outcome_of diagnostics
   | _ :: _ ->
@@ -100,19 +104,21 @@ let report results =
     Failure
 ;;
 
-let with_flags (configuration : Configuration.t) flags =
-  { configuration with
-    directories = configuration.directories @ flags.directories
-  ; definitions = configuration.definitions @ flags.definitions
-  }
+let with_flags configuration flags =
+  Configuration.extend
+    configuration
+    ~directories:flags.directories
+    ~definitions:flags.definitions
 ;;
 
 let settings_of flags =
   let open Or_error.Let_syntax in
   let%bind configuration = Configuration.load ?path:flags.configuration_path () in
-  let%map lexicon = Lexicon.extend (force Lexicon.english) configuration.vocabulary in
-  let limits = configuration.function_lines in
-  let exemptions = String.Set.of_list configuration.exemptions in
+  let%map lexicon =
+    Lexicon.extend (force Lexicon.english) (Configuration.vocabulary_of configuration)
+  in
+  let limits = Configuration.function_lines_of configuration in
+  let exemptions = String.Set.of_list (Configuration.exemptions_of configuration) in
   with_flags configuration flags, Judgement.algebra_of lexicon ~limits ~exemptions
 ;;
 

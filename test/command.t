@@ -24,9 +24,9 @@ An OCaml interface and a C translation unit use the same naming algebra.
   > EOF
   $ lexeme sample.c
   sample.c:3:12: note[plural-lift] words_at: check whether this maps word_at over a collection (line 4)
-  sample.c:5:70: error[single-letter] y: use a longer name or add a lexeme: allow-letter comment with a reason
-  sample.c:6:7: error[variable-name] multiply: expected a noun phrase
-  sample.c:7:12: error[single-letter] i: use a longer name or add a lexeme: allow-letter comment with a reason
+  sample.c:5:70: error[single-letter] y: this name is a single letter, so use a longer name, or add a comment "lexeme: allow-letter" that gives a reason
+  sample.c:6:7: error[variable-name] multiply: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
+  sample.c:7:12: error[single-letter] i: this name is a single letter, so use a longer name, or add a comment "lexeme: allow-letter" that gives a reason
   [1]
 
   $ echo 'let (' > broken.ml
@@ -44,8 +44,8 @@ Compiler-inferred predicate types apply to local definitions, aliases and C type
   > let fold number = let is_even item = Some (item mod 2 = 0) in is_even number
   > EOF
   $ lexeme predicates.ml
-  predicates.ml:3:5: error[predicate-result] has_value: expected a Boolean result, found int
-  predicates.ml:4:5: error[predicate-result] does_apply: expected a Boolean result, found int
+  predicates.ml:3:5: error[predicate-result] has_value: this predicate should return a Boolean, but it returns int
+  predicates.ml:4:5: error[predicate-result] does_apply: this predicate should return a Boolean, but it returns int
   predicates.ml:5:23: note[predicate-state] is_even: Are you sure Some false is a meaningfully different state from None? If so, you can ignore this note.
   [1]
 
@@ -55,7 +55,7 @@ Compiler-inferred predicate types apply to local definitions, aliases and C type
   > int has_value(int number);
   > EOF
   $ lexeme predicates.h
-  predicates.h:3:5: error[predicate-result] has_value: expected a Boolean result, found int
+  predicates.h:3:5: error[predicate-result] has_value: this predicate should return a Boolean, but it returns int
   [1]
 
   $ mkdir project && cd project && git init -q
@@ -63,7 +63,7 @@ Compiler-inferred predicate types apply to local definitions, aliases and C type
   $ echo 'let apply z = z' > generated.ml
   $ echo generated.ml > .gitignore
   $ lexeme
-  owned.ml:1:11: error[single-letter] x: use a longer name or add a lexeme: allow-letter comment with a reason
+  owned.ml:1:11: error[single-letter] x: this name is a single letter, so use a longer name, or add a comment "lexeme: allow-letter" that gives a reason
   [1]
 
 C types, fields and enumeration constants are judged by their roles, and a function's
@@ -89,9 +89,9 @@ definition by its length. A Boolean field is a predicate, and main keeps its nam
   > int main(void) { return 0; }
   > EOF
   $ lexeme shapes.c
-  shapes.c:2:42: error[predicate-name] ready: expected a predicate, such as is_empty or has_entries, for a Boolean
-  shapes.c:3:20: error[constructor-name] QUICKLY: expected a noun phrase
-  shapes.c:5:5: note[function-length] count_of: 12 source lines of code, more than 10
+  shapes.c:2:42: error[predicate-name] ready: this name should be a predicate, such as is_empty or has_entries, because the function returns a Boolean
+  shapes.c:3:20: error[constructor-name] QUICKLY: this name should be a noun phrase, such as matrix or start_of_line, because it names a thing
+  shapes.c:5:5: note[function-length] count_of: this definition has 12 source lines of code, more than 10
   [1]
 
 Settings come from the nearest .lexeme in the working directory or one of its parents.
@@ -107,4 +107,4 @@ Settings come from the nearest .lexeme in the working directory or one of its pa
   >   product + 1
   > EOF
   $ cd settings/nested && lexeme sample.ml
-  sample.ml:2:5: note[function-length] apply: 3 source lines of code, more than 2
+  sample.ml:2:5: note[function-length] apply: this definition has 3 source lines of code, more than 2
